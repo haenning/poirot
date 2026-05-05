@@ -21,7 +21,7 @@ A VS Code / Cursor extension for managing [paraglide-js](https://inlang.com/m/ge
 ### From source
 
 ```bash
-git clone https://github.com/youruser/poirot
+git clone https://github.com/haenning/poirot
 cd poirot
 ./install.sh
 ```
@@ -42,9 +42,9 @@ Poirot auto-discovers `project.inlang/settings.json` at the workspace root on st
 
 ### Keyboard shortcut
 
-| Action | Mac | Windows / Linux |
-|---|---|---|
-| New translation key | `Cmd+Shift+T` | `Ctrl+Shift+T` |
+| Action              | Mac            | Windows / Linux  |
+| ------------------- | -------------- | ---------------- |
+| New translation key | `Cmd+Shift+T`  | `Ctrl+Shift+T`   |
 
 ### Sidebar
 
@@ -59,7 +59,7 @@ Open the Poirot panel from the activity bar (speech bubble icon).
 
 On activation Poirot writes a `poirot` entry to `~/.cursor/mcp.json` automatically. In Cursor or any MCP-compatible agent, the tool `create_translation_key` is available:
 
-```
+```text
 create_translation_key(value: "Submit form")
 → m.brave_quiet_fox()
 ```
@@ -68,7 +68,7 @@ The agent receives the generated key reference and can insert it directly into c
 
 ## Project structure expected
 
-```
+```text
 your-project/
 └── project.inlang/
     └── settings.json       ← pathPattern lives here
