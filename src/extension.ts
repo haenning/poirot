@@ -1,9 +1,11 @@
 import * as vscode from "vscode";
 import { SidebarProvider } from "./sidebar";
+import { DecorationManager } from "./decorations";
 import { spawnMcpServer, writeCursorConfig } from "./mcp-spawn";
 
 export function activate(context: vscode.ExtensionContext): void {
-  const provider = new SidebarProvider(context);
+  const decorations = new DecorationManager(context);
+  const provider = new SidebarProvider(context, decorations);
 
   context.subscriptions.push(
     vscode.window.registerWebviewViewProvider("poirot.sidebar", provider)
@@ -24,6 +26,9 @@ export function activate(context: vscode.ExtensionContext): void {
   provider.onConfigLoaded = (settingsPath) => {
     writeCursorConfig(mcpServerPath, settingsPath);
   };
+
+  // Auto-load config immediately on activation so decorations work without opening the sidebar
+  provider.tryAutoDiscover();
 }
 
 export function deactivate(): void {}

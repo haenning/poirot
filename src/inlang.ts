@@ -44,8 +44,6 @@ export async function readInlangConfig(settingsPath: string): Promise<InlangConf
   // projectDir is two levels up from settings.json (above project.inlang/)
   const projectDir = path.dirname(path.dirname(settingsPath));
 
-  console.log("[paraglide-helper] config:", { baseLocale, locales, pathPattern, projectDir });
-
   return { settingsPath, baseLocale, locales, pathPattern, projectDir };
 }
 
@@ -58,13 +56,10 @@ export async function readAllLocales(config: InlangConfig): Promise<LocaleMap> {
   await Promise.all(
     config.locales.map(async (locale) => {
       const filePath = resolveLocalePath(config, locale);
-      console.log("[paraglide-helper] reading locale file:", filePath);
       try {
         const raw = await fs.promises.readFile(filePath, "utf8");
         result[locale] = JSON.parse(raw);
-        console.log("[paraglide-helper] loaded", locale, "keys:", Object.keys(result[locale]).length);
-      } catch (err) {
-        console.log("[paraglide-helper] failed to read", filePath, String(err));
+      } catch {
         result[locale] = {};
       }
     })

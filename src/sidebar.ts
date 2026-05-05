@@ -10,6 +10,8 @@ import {
   saveKeyEdits,
 } from "./inlang";
 import { generateUniqueKey } from "./keygen";
+import { DecorationManager } from "./decorations";
+
 
 const M_FUNC_RE = /\bm\.([a-z][a-z0-9_]*)\(\)/g;
 
@@ -29,12 +31,18 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
   private _localeMap?: LocaleMap;
   private _pendingEdits = new Map<string, Record<string, string>>();
   private _lastFileKeys: string[] = []; // sticky — only updated on supported file switch
+  private _decorations: DecorationManager;
   onConfigLoaded?: (settingsPath: string) => void;
 
   // search-reindex state: track last phrase that triggered a reindex
   private _reindexedFor: string | null = null;
 
-  constructor(private readonly _context: vscode.ExtensionContext) {}
+  constructor(
+    private readonly _context: vscode.ExtensionContext,
+    decorations: DecorationManager
+  ) {
+    this._decorations = decorations;
+  }
 
   resolveWebviewView(webviewView: vscode.WebviewView): void {
     this._view = webviewView;
@@ -60,10 +68,10 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
     );
 
     this._postState();
-    this._tryAutoDiscover();
+    this.tryAutoDiscover();
   }
 
-  private async _tryAutoDiscover(): Promise<void> {
+  async tryAutoDiscover(): Promise<void> {
     const stored = this._context.workspaceState.get<string>("inlangSettingsPath");
     if (stored) {
       await this._loadConfig(stored);
@@ -86,6 +94,7 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
     this._pendingEdits.clear();
     await this._context.workspaceState.update("inlangSettingsPath", settingsPath);
     this.onConfigLoaded?.(settingsPath);
+    this._decorations.update(this._config, this._localeMap);
     this._postState();
   }
 
@@ -93,6 +102,7 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
   async reloadLocales(): Promise<void> {
     if (!this._config) return;
     this._localeMap = await readAllLocales(this._config);
+    this._decorations.update(this._config, this._localeMap);
     this._postState();
   }
 
