@@ -1,0 +1,55 @@
+{
+  "name": "paraglide-helper",
+  "displayName": "Paraglide Helper",
+  "description": "Manage paraglide-js/inlang i18n translation keys from the sidebar",
+  "version": "0.0.1",
+  "engines": {
+    "vscode": "^1.85.0"
+  },
+  "categories": ["Other"],
+  "activationEvents": ["onStartupFinished"],
+  "main": "./dist/extension.js",
+  "contributes": {
+    "viewsContainers": {
+      "activitybar": [
+        {
+          "id": "paraglide-helper",
+          "title": "Paraglide Helper",
+          "icon": "$(globe)"
+        }
+      ]
+    },
+    "views": {
+      "paraglide-helper": [
+        {
+          "type": "webview",
+          "id": "paraglideHelper.sidebar",
+          "name": "Paraglide Helper"
+        }
+      ]
+    },
+    "commands": [
+      {
+        "command": "paraglideHelper.newKey",
+        "title": "Paraglide: New Translation Key"
+      }
+    ]
+  },
+  "scripts": {
+    "compile": "node esbuild.js",
+    "watch": "node esbuild.js --watch",
+    "vscode:prepublish": "node esbuild.js --production",
+    "package": "vsce package"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.10.0",
+    "unique-names-generator": "^4.7.1"
+  },
+  "devDependencies": {
+    "@types/node": "^20.0.0",
+    "@types/vscode": "^1.85.0",
+    "@vscode/vsce": "^3.0.0",
+    "esbuild": "^0.24.0",
+    "typescript": "^5.4.0"
+  }
+}
