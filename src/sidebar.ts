@@ -13,11 +13,26 @@ import { generateUniqueKey } from "./keygen";
 
 const M_FUNC_RE = /\bm\.([a-z][a-z0-9_]*)\(\)/g;
 
+const SUPPORTED_EXTENSIONS = new Set([
+  ".svelte", ".ts", ".tsx", ".js", ".jsx", ".vue", ".astro",
+]);
+
+function isSupportedFile(uri: vscode.Uri | undefined): boolean {
+  if (!uri) return false;
+  const ext = uri.fsPath.slice(uri.fsPath.lastIndexOf("."));
+  return SUPPORTED_EXTENSIONS.has(ext);
+}
+
 export class SidebarProvider implements vscode.WebviewViewProvider {
   private _view?: vscode.WebviewView;
   private _config?: InlangConfig;
   private _localeMap?: LocaleMap;
   private _pendingEdits = new Map<string, Record<string, string>>();
+  private _lastFileKeys: string[] = []; // sticky — only updated on supported file switch
+  onConfigLoaded?: (settingsPath: string) => void;
+
+  // search-reindex state: track last phrase that triggered a reindex
+  private _reindexedFor: string | null = null;
 
   constructor(private readonly _context: vscode.ExtensionContext) {}
 
@@ -35,14 +50,16 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
     });
 
     this._context.subscriptions.push(
-      vscode.window.onDidChangeActiveTextEditor(() => {
-        if (this._config && this._localeMap) {
+      vscode.window.onDidChangeActiveTextEditor((editor) => {
+        if (isSupportedFile(editor?.document.uri)) {
+          this._lastFileKeys = this._scanFileKeys(editor!);
           this._postState();
         }
+        // ignore unsupported files / tool windows — keep showing last known keys
       })
     );
 
-    // Auto-discover settings on first open
+    this._postState();
     this._tryAutoDiscover();
   }
 
@@ -59,7 +76,7 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
       await readInlangConfig(candidate);
       await this._loadConfig(candidate);
     } catch {
-      // no auto-discovery — user sets path manually
+      // user sets path manually
     }
   }
 
@@ -68,6 +85,14 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
     this._localeMap = await readAllLocales(this._config);
     this._pendingEdits.clear();
     await this._context.workspaceState.update("inlangSettingsPath", settingsPath);
+    this.onConfigLoaded?.(settingsPath);
+    this._postState();
+  }
+
+  // Called externally (e.g. from MCP reload signal) — always re-reads all files from disk
+  async reloadLocales(): Promise<void> {
+    if (!this._config) return;
+    this._localeMap = await readAllLocales(this._config);
     this._postState();
   }
 
@@ -100,18 +125,21 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
         if (!edits) break;
         await saveKeyEdits(this._config, this._localeMap, key, edits);
         this._pendingEdits.delete(key);
+        // re-read from disk so in-memory state matches exactly what was written
+        await this.reloadLocales();
         break;
       }
 
-      case "searchKeys": {
-        const query = (msg.query as string).toLowerCase().trim();
-        if (!this._config || !this._localeMap) break;
-        const base = this._config.baseLocale;
-        const results = getAllKeys(this._localeMap, base)
-          .filter((k) => k.includes(query) || (this._localeMap![base][k] ?? "").toLowerCase().includes(query))
-          .map((k) => ({ key: k, value: this._localeMap![base][k] ?? "" }))
-          .slice(0, 50);
-        this._view?.webview.postMessage({ type: "searchResults", results });
+      case "reindexAndSearch": {
+        const query = (msg.query as string);
+        if (query.length <= 3) break;
+        if (this._reindexedFor === query) break; // already reindexed for this phrase
+        this._reindexedFor = query;
+        await this.reloadLocales(); // posts updated state — webview re-runs search
+        // reset after 5s so the same phrase can reindex again later
+        setTimeout(() => {
+          if (this._reindexedFor === query) this._reindexedFor = null;
+        }, 5000);
         break;
       }
     }
@@ -119,14 +147,22 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
 
   async handleNewKeyCommand(): Promise<void> {
     if (!this._config || !this._localeMap) {
-      vscode.window.showErrorMessage("Paraglide Helper: No settings loaded. Set the config path first.");
+      vscode.window.showErrorMessage("Poirot: No settings loaded. Set the config path first.");
       return;
     }
-    const existing = new Set(getAllKeys(this._localeMap, this._config.baseLocale));
+
+    const baseLocale = this._config.baseLocale;
+    const value = await vscode.window.showInputBox({
+      prompt: `Translation value (${baseLocale})`,
+      placeHolder: "e.g. Submit form",
+    });
+    if (value === undefined) return;
+
+    const existing = new Set(getAllKeys(this._localeMap, baseLocale));
     const suggested = generateUniqueKey(existing);
     const key = await vscode.window.showInputBox({
       value: suggested,
-      prompt: "Confirm or edit the translation key name",
+      prompt: "Key name — confirm or edit",
       validateInput: (v) => {
         if (!v) return "Key cannot be empty";
         if (!/^[a-z][a-z0-9_]*$/.test(v)) return "Use lowercase letters, digits, underscores only";
@@ -136,7 +172,7 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
     });
     if (!key) return;
 
-    await addKey(this._config, this._localeMap, key, "");
+    await addKey(this._config, this._localeMap, key, value);
 
     const editor = vscode.window.activeTextEditor;
     if (editor) {
@@ -145,37 +181,28 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
       });
     }
 
-    this._postState();
+    await this.reloadLocales();
   }
 
   private _postState(): void {
     if (!this._view) return;
-    const keys = this._config && this._localeMap
-      ? getAllKeys(this._localeMap, this._config.baseLocale)
-      : [];
+    const localeMap = this._localeMap ?? {};
+    const config = this._config;
+    const keys = config ? getAllKeys(localeMap, config.baseLocale) : [];
     const currentFileKeys = this._getCurrentFileKeys();
-    const baseValues: Record<string, string> = {};
-    if (this._config && this._localeMap) {
-      const base = this._config.baseLocale;
-      for (const k of keys) {
-        baseValues[k] = this._localeMap[base][k] ?? "";
-      }
-    }
+
     this._view.webview.postMessage({
       type: "state",
       configPath: this._context.workspaceState.get<string>("inlangSettingsPath") ?? "",
-      locales: this._config?.locales ?? [],
-      baseLocale: this._config?.baseLocale ?? "",
+      locales: config?.locales ?? [],
+      baseLocale: config?.baseLocale ?? "",
       keys,
-      baseValues,
       currentFileKeys,
-      localeMap: this._localeMap ?? {},
+      localeMap,
     });
   }
 
-  private _getCurrentFileKeys(): string[] {
-    const editor = vscode.window.activeTextEditor;
-    if (!editor) return [];
+  private _scanFileKeys(editor: vscode.TextEditor): string[] {
     const text = editor.document.getText();
     const found = new Set<string>();
     let m: RegExpExecArray | null;
@@ -184,6 +211,14 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
       found.add(m[1]);
     }
     return [...found];
+  }
+
+  private _getCurrentFileKeys(): string[] {
+    const editor = vscode.window.activeTextEditor;
+    if (editor && isSupportedFile(editor.document.uri)) {
+      this._lastFileKeys = this._scanFileKeys(editor);
+    }
+    return this._lastFileKeys;
   }
 
   private _postError(message: string): void {
@@ -205,7 +240,7 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
     padding: 8px;
   }
   section { margin-bottom: 16px; }
-  h4 { margin-bottom: 6px; font-size: 11px; text-transform: uppercase; opacity: 0.7; }
+  h4 { margin-bottom: 6px; font-size: 11px; text-transform: uppercase; opacity: 0.6; letter-spacing: 0.05em; }
   input[type="text"] {
     width: 100%;
     background: var(--vscode-input-background);
@@ -225,6 +260,7 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
     cursor: pointer;
     font-size: inherit;
     font-family: inherit;
+    white-space: nowrap;
   }
   button:hover { background: var(--vscode-button-hoverBackground); }
   button.secondary {
@@ -232,18 +268,34 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
     color: var(--vscode-button-secondaryForeground);
   }
   button.secondary:hover { background: var(--vscode-button-secondaryHoverBackground); }
+  button.icon {
+    background: none;
+    color: var(--vscode-foreground);
+    padding: 2px 4px;
+    opacity: 0.6;
+    font-size: 14px;
+    line-height: 1;
+  }
+  button.icon:hover { opacity: 1; background: var(--vscode-toolbar-hoverBackground, rgba(128,128,128,0.15)); }
+  .keys-header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 6px; }
+  .keys-header h4 { margin-bottom: 0; }
   .row { display: flex; gap: 4px; align-items: center; }
   .row input { flex: 1; }
-  .key-item { margin-bottom: 8px; border-bottom: 1px solid var(--vscode-panel-border, #333); padding-bottom: 8px; }
-  .key-name { font-weight: bold; font-size: 12px; margin-bottom: 4px; }
-  .locale-row { display: flex; gap: 4px; align-items: center; margin-bottom: 4px; }
-  .locale-label { width: 28px; flex-shrink: 0; font-size: 10px; opacity: 0.7; }
-  .locale-row input { flex: 1; }
+  .key-item {
+    margin-bottom: 6px;
+    border-bottom: 1px solid var(--vscode-panel-border, rgba(128,128,128,0.2));
+    padding-bottom: 6px;
+  }
+  .key-header { display: flex; align-items: center; gap: 4px; margin-bottom: 4px; }
+  .key-name { font-size: 11px; font-family: var(--vscode-editor-font-family, monospace); flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .locale-row { display: flex; gap: 4px; align-items: baseline; margin-bottom: 3px; }
+  .locale-label { width: 24px; flex-shrink: 0; font-size: 10px; opacity: 0.6; font-weight: bold; }
+  .locale-val { flex: 1; font-size: 11px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; opacity: 0.9; }
+  .locale-val.empty { opacity: 0.35; font-style: italic; }
+  .locale-row input { flex: 1; font-size: 11px; }
+  .save-row { margin-top: 4px; display: flex; justify-content: flex-end; gap: 4px; }
   .error { color: var(--vscode-errorForeground); font-size: 11px; margin-top: 4px; }
-  .empty { opacity: 0.5; font-size: 11px; }
-  .search-result { padding: 4px 0; border-bottom: 1px solid var(--vscode-panel-border, #333); }
-  .result-key { font-weight: bold; font-size: 11px; }
-  .result-val { font-size: 11px; opacity: 0.8; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .empty-msg { opacity: 0.5; font-size: 11px; }
 </style>
 </head>
 <body>
@@ -256,48 +308,39 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
   <div id="configError" class="error"></div>
 </section>
 
-<section id="s-search">
-  <h4>Search</h4>
-  <input id="searchInput" type="text" placeholder="Search keys..." />
-  <div id="searchResults"></div>
-</section>
-
-<section id="s-newkey">
-  <h4>New Key</h4>
-  <button id="newKeyBtn">+ New Key</button>
-</section>
-
-<section id="s-current">
-  <h4>Keys in current file</h4>
-  <div id="currentKeysList"></div>
+<section id="s-keys">
+  <div class="keys-header">
+    <h4>Keys</h4>
+    <button id="newKeyBtn" title="New Translation Key (⌘⇧T)">+ New Key</button>
+  </div>
+  <input id="searchInput" type="text" placeholder="Search all keys..." style="margin-bottom:8px" />
+  <div id="keysList"></div>
 </section>
 
 <script>
   const vscode = acquireVsCodeApi();
-  let state = { configPath: '', locales: [], baseLocale: '', keys: [], baseValues: {}, currentFileKeys: [], localeMap: {} };
+  let state = { configPath: '', locales: [], baseLocale: '', keys: [], currentFileKeys: [], localeMap: {} };
+  let searchQuery = '';
   let searchTimer = null;
+  const editingKeys = new Set();
+  // track which queries have already triggered a reindex
+  const reindexedQueries = new Set();
 
   document.getElementById('loadConfig').addEventListener('click', () => {
     const p = document.getElementById('configPath').value.trim();
     if (!p) return;
     vscode.postMessage({ type: 'setConfigPath', path: p });
   });
-
   document.getElementById('configPath').addEventListener('keydown', (e) => {
     if (e.key === 'Enter') document.getElementById('loadConfig').click();
   });
-
   document.getElementById('newKeyBtn').addEventListener('click', () => {
     vscode.postMessage({ type: 'newKey' });
   });
-
   document.getElementById('searchInput').addEventListener('input', (e) => {
+    searchQuery = e.target.value;
     clearTimeout(searchTimer);
-    const q = e.target.value;
-    if (!q.trim()) { document.getElementById('searchResults').innerHTML = ''; return; }
-    searchTimer = setTimeout(() => {
-      vscode.postMessage({ type: 'searchKeys', query: q });
-    }, 200);
+    searchTimer = setTimeout(() => renderKeys(), 150);
   });
 
   window.addEventListener('message', (e) => {
@@ -306,63 +349,104 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
       state = msg;
       document.getElementById('configPath').value = msg.configPath || '';
       document.getElementById('configError').textContent = '';
-      renderCurrentKeys();
-    } else if (msg.type === 'searchResults') {
-      renderSearchResults(msg.results);
+      renderKeys();
     } else if (msg.type === 'error') {
       document.getElementById('configError').textContent = msg.message;
     }
   });
 
-  function renderCurrentKeys() {
-    const container = document.getElementById('currentKeysList');
-    const { currentFileKeys, locales, baseLocale, localeMap } = state;
-    if (!currentFileKeys.length) {
-      container.innerHTML = '<div class="empty">No m.key() calls found in current file</div>';
+  function displayLocales(baseLocale, allLocales) {
+    const others = allLocales.filter(l => l !== baseLocale).sort().slice(0, 2);
+    return [baseLocale, ...others];
+  }
+
+  function getVisibleKeys() {
+    const { currentFileKeys, localeMap, baseLocale } = state;
+    const q = searchQuery.trim().toLowerCase();
+    if (!q) return currentFileKeys;
+    const allKeys = Object.keys(localeMap[baseLocale] || {}).filter(k => k !== '$schema');
+    return allKeys.filter(k =>
+      k.toLowerCase().includes(q) ||
+      String((localeMap[baseLocale] || {})[k] ?? '').toLowerCase().includes(q)
+    );
+  }
+
+  function renderKeys() {
+    const container = document.getElementById('keysList');
+    const { locales, baseLocale, localeMap } = state;
+    const visibleKeys = getVisibleKeys();
+    const q = searchQuery.trim();
+
+    if (!visibleKeys.length) {
+      if (q) {
+        container.innerHTML = '<div class="empty-msg">No keys match</div>';
+        // reindex once for queries longer than 3 chars
+        if (q.length > 3 && !reindexedQueries.has(q)) {
+          reindexedQueries.add(q);
+          vscode.postMessage({ type: 'reindexAndSearch', query: q });
+          // allow reindexing again after 5s
+          setTimeout(() => reindexedQueries.delete(q), 5000);
+        }
+      } else {
+        container.innerHTML = '<div class="empty-msg">No m.key() calls in current file</div>';
+      }
       return;
     }
-    container.innerHTML = currentFileKeys.map(key => {
-      const localeInputs = locales.map(locale => {
-        const val = (localeMap[locale] || {})[key] || '';
+
+    const shownLocales = displayLocales(baseLocale, locales);
+
+    container.innerHTML = visibleKeys.map(key => {
+      const isEditing = editingKeys.has(key);
+      const localeRows = shownLocales.map(locale => {
+        const val = String((localeMap[locale] || {})[key] ?? '');
+        if (isEditing) {
+          return \`<div class="locale-row">
+            <span class="locale-label">\${escHtml(locale)}</span>
+            <input type="text" data-key="\${escHtml(key)}" data-locale="\${escHtml(locale)}"
+                   value="\${escHtml(val)}" placeholder="(empty)" />
+          </div>\`;
+        }
+        const isEmpty = !val;
         return \`<div class="locale-row">
           <span class="locale-label">\${escHtml(locale)}</span>
-          <input type="text" data-key="\${escHtml(key)}" data-locale="\${escHtml(locale)}"
-                 value="\${escHtml(val)}" placeholder="(empty)" />
+          <span class="locale-val\${isEmpty ? ' empty' : ''}">\${isEmpty ? 'empty' : escHtml(val)}</span>
         </div>\`;
       }).join('');
+
+      const editBtn = \`<button class="icon edit-btn" data-key="\${escHtml(key)}" title="Edit"><svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" style="pointer-events:none"><path fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="m14.363 5.652l1.48-1.48a2 2 0 0 1 2.829 0l1.414 1.414a2 2 0 0 1 0 2.828l-1.48 1.48m-4.243-4.242l-9.616 9.615a2 2 0 0 0-.578 1.238l-.242 2.74a1 1 0 0 0 1.084 1.085l2.74-.242a2 2 0 0 0 1.24-.578l9.615-9.616m-4.243-4.242l4.243 4.242" /></svg></button>\`;
+      const saveRow = isEditing ? \`<div class="save-row">
+        <button class="secondary cancel-btn" data-key="\${escHtml(key)}">Cancel</button>
+        <button class="save-btn" data-key="\${escHtml(key)}">Save</button>
+      </div>\` : '';
+
       return \`<div class="key-item">
-        <div class="key-name">\${escHtml(key)}</div>
-        \${localeInputs}
-        <button class="secondary save-btn" data-key="\${escHtml(key)}">Save</button>
+        <div class="key-header">
+          <span class="key-name">\${escHtml(key)}</span>
+          \${!isEditing ? editBtn : ''}
+        </div>
+        \${localeRows}
+        \${saveRow}
       </div>\`;
     }).join('');
 
+    container.querySelectorAll('.edit-btn').forEach(btn => {
+      btn.addEventListener('click', () => { editingKeys.add(btn.dataset.key); renderKeys(); });
+    });
+    container.querySelectorAll('.cancel-btn').forEach(btn => {
+      btn.addEventListener('click', () => { editingKeys.delete(btn.dataset.key); renderKeys(); });
+    });
     container.querySelectorAll('input[data-key]').forEach(input => {
       input.addEventListener('input', (e) => {
         const el = e.target;
         vscode.postMessage({ type: 'editKey', key: el.dataset.key, locale: el.dataset.locale, value: el.value });
       });
     });
-
     container.querySelectorAll('.save-btn').forEach(btn => {
       btn.addEventListener('click', () => {
+        editingKeys.delete(btn.dataset.key);
         vscode.postMessage({ type: 'saveKey', key: btn.dataset.key });
       });
     });
-  }
-
-  function renderSearchResults(results) {
-    const container = document.getElementById('searchResults');
-    if (!results.length) {
-      container.innerHTML = '<div class="empty">No results</div>';
-      return;
-    }
-    container.innerHTML = results.map(r =>
-      \`<div class="search-result">
-        <div class="result-key">\${escHtml(r.key)}</div>
-        <div class="result-val">\${escHtml(r.value || '(empty)')}</div>
-      </div>\`
-    ).join('');
   }
 
   function escHtml(s) {

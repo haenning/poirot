@@ -33,7 +33,8 @@ async function runMcpServer(): Promise<void> {
     }
 
     const value = (request.params.arguments as { value: string }).value;
-    const settingsPath = path.join(process.cwd(), "project.inlang", "settings.json");
+    // settings path passed as first CLI arg, fallback to cwd convention
+    const settingsPath = process.argv[2] ?? path.join(process.cwd(), "project.inlang", "settings.json");
 
     const config = await readInlangConfig(settingsPath);
     const localeMap = await readAllLocales(config);
@@ -41,6 +42,9 @@ async function runMcpServer(): Promise<void> {
     const key = generateUniqueKey(existing);
 
     await addKey(config, localeMap, key, value);
+
+    // Signal the extension to reload (extension listens on stderr)
+    process.stderr.write(`POIROT_RELOAD\n`);
 
     return {
       content: [{ type: "text" as const, text: `m.${key}()` }],

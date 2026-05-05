@@ -19,25 +19,32 @@ export async function readInlangConfig(settingsPath: string): Promise<InlangConf
   const baseLocale: string = settings.baseLocale ?? settings.sourceLanguageTag ?? "en";
   const locales: string[] = settings.locales ?? settings.languageTags ?? [baseLocale];
 
-  // Find pathPattern across common plugin shapes
+  // Find pathPattern — check the top-level plugin config key first (real inlang format),
+  // then fall back to scanning the modules array for older shapes
   let pathPattern = "./messages/{locale}.json";
-  const modules: unknown[] = settings.modules ?? settings.plugins ?? [];
-  for (const mod of modules) {
-    const m = mod as Record<string, unknown>;
-    if (m.pathPattern && typeof m.pathPattern === "string") {
-      pathPattern = m.pathPattern;
-      break;
-    }
-    // nested options shape: { id, options: { pathPattern } }
-    const opts = m.options as Record<string, unknown> | undefined;
-    if (opts?.pathPattern && typeof opts.pathPattern === "string") {
-      pathPattern = opts.pathPattern;
-      break;
+  const pluginConfig = settings["plugin.inlang.messageFormat"] as Record<string, unknown> | undefined;
+  if (pluginConfig?.pathPattern && typeof pluginConfig.pathPattern === "string") {
+    pathPattern = pluginConfig.pathPattern;
+  } else {
+    const modules: unknown[] = settings.modules ?? settings.plugins ?? [];
+    for (const mod of modules) {
+      const m = mod as Record<string, unknown>;
+      if (m.pathPattern && typeof m.pathPattern === "string") {
+        pathPattern = m.pathPattern;
+        break;
+      }
+      const opts = m.options as Record<string, unknown> | undefined;
+      if (opts?.pathPattern && typeof opts.pathPattern === "string") {
+        pathPattern = opts.pathPattern;
+        break;
+      }
     }
   }
 
   // projectDir is two levels up from settings.json (above project.inlang/)
   const projectDir = path.dirname(path.dirname(settingsPath));
+
+  console.log("[paraglide-helper] config:", { baseLocale, locales, pathPattern, projectDir });
 
   return { settingsPath, baseLocale, locales, pathPattern, projectDir };
 }
@@ -51,10 +58,13 @@ export async function readAllLocales(config: InlangConfig): Promise<LocaleMap> {
   await Promise.all(
     config.locales.map(async (locale) => {
       const filePath = resolveLocalePath(config, locale);
+      console.log("[paraglide-helper] reading locale file:", filePath);
       try {
         const raw = await fs.promises.readFile(filePath, "utf8");
         result[locale] = JSON.parse(raw);
-      } catch {
+        console.log("[paraglide-helper] loaded", locale, "keys:", Object.keys(result[locale]).length);
+      } catch (err) {
+        console.log("[paraglide-helper] failed to read", filePath, String(err));
         result[locale] = {};
       }
     })

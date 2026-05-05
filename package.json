@@ -1,6 +1,6 @@
 {
-  "name": "paraglide-helper",
-  "displayName": "Paraglide Helper",
+  "name": "poirot",
+  "displayName": "Poirot",
   "description": "Manage paraglide-js/inlang i18n translation keys from the sidebar",
   "version": "0.0.1",
   "engines": {
@@ -13,25 +13,32 @@
     "viewsContainers": {
       "activitybar": [
         {
-          "id": "paraglide-helper",
-          "title": "Paraglide Helper",
-          "icon": "$(globe)"
+          "id": "poirot",
+          "title": "Poirot",
+          "icon": "images/iconoir--quote-message-solid.svg"
         }
       ]
     },
     "views": {
-      "paraglide-helper": [
+      "poirot": [
         {
           "type": "webview",
-          "id": "paraglideHelper.sidebar",
-          "name": "Paraglide Helper"
+          "id": "poirot.sidebar",
+          "name": "Poirot"
         }
       ]
     },
     "commands": [
       {
-        "command": "paraglideHelper.newKey",
-        "title": "Paraglide: New Translation Key"
+        "command": "poirot.newKey",
+        "title": "Poirot: New Translation Key"
+      }
+    ],
+    "keybindings": [
+      {
+        "command": "poirot.newKey",
+        "key": "ctrl+shift+t",
+        "mac": "cmd+shift+t"
       }
     ]
   },
