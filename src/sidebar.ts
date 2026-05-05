@@ -31,6 +31,7 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
   private _localeMap?: LocaleMap;
   private _pendingEdits = new Map<string, Record<string, string>>();
   private _lastFileKeys: string[] = []; // sticky — only updated on supported file switch
+  private _candidates: string[] = [];
   private _decorations: DecorationManager;
   onConfigLoaded?: (settingsPath: string) => void;
 
@@ -73,19 +74,33 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
 
   async tryAutoDiscover(): Promise<void> {
     const stored = this._context.workspaceState.get<string>("inlangSettingsPath");
+
+    // Scan all workspace folders for settings.json candidates
+    const candidates = await this._findCandidates();
+    this._candidates = candidates;
+    this._postState();
+
     if (stored) {
       await this._loadConfig(stored);
       return;
     }
-    const folders = vscode.workspace.workspaceFolders;
-    if (!folders) return;
-    const candidate = path.join(folders[0].uri.fsPath, "project.inlang", "settings.json");
-    try {
-      await readInlangConfig(candidate);
-      await this._loadConfig(candidate);
-    } catch {
-      // user sets path manually
+    if (candidates.length === 1) {
+      await this._loadConfig(candidates[0]);
     }
+  }
+
+  private async _findCandidates(): Promise<string[]> {
+    const folders = vscode.workspace.workspaceFolders;
+    if (!folders) return [];
+    const found: string[] = [];
+    for (const folder of folders) {
+      const uris = await vscode.workspace.findFiles(
+        new vscode.RelativePattern(folder, "**/project.inlang/settings.json"),
+        "**/node_modules/**"
+      );
+      found.push(...uris.map((u) => u.fsPath));
+    }
+    return found;
   }
 
   private async _loadConfig(settingsPath: string): Promise<void> {
@@ -140,6 +155,17 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
         break;
       }
 
+      case "findUsages": {
+        const key = msg.key as string;
+        vscode.commands.executeCommand("workbench.action.findInFiles", {
+          query: `m.${key}()`,
+          triggerSearch: true,
+          isRegex: false,
+          filesToInclude: "src",
+        });
+        break;
+      }
+
       case "reindexAndSearch": {
         const query = (msg.query as string);
         if (query.length <= 3) break;
@@ -152,6 +178,14 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
         }, 5000);
         break;
       }
+    }
+  }
+
+  openEditKey(key: string): void {
+    // If the view isn't visible yet, reveal it first
+    if (this._view) {
+      this._view.show(true); // preserveFocus=true so editor doesn't lose caret
+      this._view.webview.postMessage({ type: "openEditKey", key });
     }
   }
 
@@ -204,6 +238,7 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
     this._view.webview.postMessage({
       type: "state",
       configPath: this._context.workspaceState.get<string>("inlangSettingsPath") ?? "",
+      candidates: this._candidates,
       locales: config?.locales ?? [],
       baseLocale: config?.baseLocale ?? "",
       keys,
@@ -249,8 +284,7 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
     color: var(--vscode-foreground);
     padding: 8px;
   }
-  section { margin-bottom: 16px; }
-  h4 { margin-bottom: 6px; font-size: 11px; text-transform: uppercase; opacity: 0.6; letter-spacing: 0.05em; }
+  h4 { font-size: 11px; text-transform: uppercase; opacity: 0.6; letter-spacing: 0.05em; }
   input[type="text"] {
     width: 100%;
     background: var(--vscode-input-background);
@@ -283,14 +317,53 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
     color: var(--vscode-foreground);
     padding: 2px 4px;
     opacity: 0.6;
-    font-size: 14px;
     line-height: 1;
   }
   button.icon:hover { opacity: 1; background: var(--vscode-toolbar-hoverBackground, rgba(128,128,128,0.15)); }
-  .keys-header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 6px; }
-  .keys-header h4 { margin-bottom: 0; }
-  .row { display: flex; gap: 4px; align-items: center; }
-  .row input { flex: 1; }
+  button.full { width: 100%; margin-bottom: 6px; }
+
+  /* Config accordion */
+  details { margin-bottom: 10px; }
+  summary {
+    cursor: pointer;
+    list-style: none;
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    padding: 3px 0;
+    user-select: none;
+  }
+  summary::-webkit-details-marker { display: none; }
+  summary .chevron { opacity: 0.5; font-size: 10px; transition: transform 0.15s; }
+  details[open] summary .chevron { transform: rotate(90deg); }
+  .config-body { padding-top: 6px; }
+  .candidate-list { margin-bottom: 6px; }
+  .candidate-item {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    padding: 3px 0;
+    cursor: pointer;
+    font-size: 11px;
+  }
+  .candidate-item input[type="radio"] { flex-shrink: 0; cursor: pointer; }
+  .candidate-path {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    opacity: 0.85;
+    font-family: var(--vscode-editor-font-family, monospace);
+  }
+  .candidate-path.active { opacity: 1; font-weight: bold; }
+  .manual-row { display: flex; gap: 4px; margin-top: 4px; }
+  .manual-row input { flex: 1; }
+  .config-status { font-size: 10px; opacity: 0.5; margin-top: 4px; }
+
+  /* Keys section */
+  #s-keys { }
+  .keys-top { margin-bottom: 6px; }
+  .keys-top h4 { margin-bottom: 6px; }
+
   .key-item {
     margin-bottom: 6px;
     border-bottom: 1px solid var(--vscode-panel-border, rgba(128,128,128,0.2));
@@ -309,31 +382,38 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
 </style>
 </head>
 <body>
-<section id="s-config">
-  <h4>Config</h4>
-  <div class="row">
-    <input id="configPath" type="text" placeholder="project.inlang/settings.json path" />
-    <button id="loadConfig">Load</button>
+
+<details id="configDetails">
+  <summary>
+    <span class="chevron">▶</span>
+    <h4 style="margin:0">Config</h4>
+    <span id="configSummaryPath" style="font-size:10px;opacity:0.45;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;flex:1;margin-left:4px;font-family:var(--vscode-editor-font-family,monospace)"></span>
+  </summary>
+  <div class="config-body">
+    <div id="candidateList" class="candidate-list"></div>
+    <div class="manual-row">
+      <input id="configPath" type="text" placeholder="or paste path manually…" />
+      <button id="loadConfig">Load</button>
+    </div>
+    <div id="configError" class="error"></div>
   </div>
-  <div id="configError" class="error"></div>
-</section>
+</details>
 
 <section id="s-keys">
-  <div class="keys-header">
+  <div class="keys-top">
     <h4>Keys</h4>
-    <button id="newKeyBtn" title="New Translation Key (⌘⇧T)">+ New Key</button>
   </div>
-  <input id="searchInput" type="text" placeholder="Search all keys..." style="margin-bottom:8px" />
+  <button id="newKeyBtn" class="full" title="New Translation Key (⌘⇧T)">+ New Key</button>
+  <input id="searchInput" type="text" placeholder="Search all keys…" style="margin-bottom:8px" />
   <div id="keysList"></div>
 </section>
 
 <script>
   const vscode = acquireVsCodeApi();
-  let state = { configPath: '', locales: [], baseLocale: '', keys: [], currentFileKeys: [], localeMap: {} };
+  let state = { configPath: '', candidates: [], locales: [], baseLocale: '', keys: [], currentFileKeys: [], localeMap: {} };
   let searchQuery = '';
   let searchTimer = null;
   const editingKeys = new Set();
-  // track which queries have already triggered a reindex
   const reindexedQueries = new Set();
 
   document.getElementById('loadConfig').addEventListener('click', () => {
@@ -357,13 +437,56 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
     const msg = e.data;
     if (msg.type === 'state') {
       state = msg;
-      document.getElementById('configPath').value = msg.configPath || '';
-      document.getElementById('configError').textContent = '';
+      renderConfig();
       renderKeys();
     } else if (msg.type === 'error') {
       document.getElementById('configError').textContent = msg.message;
+    } else if (msg.type === 'openEditKey') {
+      editingKeys.add(msg.key);
+      renderKeys();
+      setTimeout(() => {
+        const el = document.querySelector(\`[data-key-item="\${msg.key}"]\`);
+        if (el) el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+      }, 50);
     }
   });
+
+  function renderConfig() {
+    const { configPath, candidates } = state;
+    const details = document.getElementById('configDetails');
+    const summaryPath = document.getElementById('configSummaryPath');
+    const list = document.getElementById('candidateList');
+
+    // Summary line shows short name of active config
+    summaryPath.textContent = configPath ? configPath.split('/').slice(-3).join('/') : '';
+
+    // Auto-collapse when exactly one candidate is found and it's already active
+    if (candidates.length === 1 && configPath === candidates[0]) {
+      details.removeAttribute('open');
+    } else if (!configPath) {
+      details.setAttribute('open', '');
+    }
+
+    // Render radio list
+    if (candidates.length === 0) {
+      list.innerHTML = '';
+      return;
+    }
+    list.innerHTML = candidates.map(c => {
+      const shortPath = c.split('/').slice(-4).join('/');
+      const isActive = c === configPath;
+      return \`<label class="candidate-item">
+        <input type="radio" name="candidate" value="\${escHtml(c)}" \${isActive ? 'checked' : ''} />
+        <span class="candidate-path\${isActive ? ' active' : ''}" title="\${escHtml(c)}">\${escHtml(shortPath)}</span>
+      </label>\`;
+    }).join('');
+
+    list.querySelectorAll('input[type="radio"]').forEach(radio => {
+      radio.addEventListener('change', () => {
+        if (radio.checked) vscode.postMessage({ type: 'setConfigPath', path: radio.value });
+      });
+    });
+  }
 
   function displayLocales(baseLocale, allLocales) {
     const others = allLocales.filter(l => l !== baseLocale).sort().slice(0, 2);
@@ -390,11 +513,9 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
     if (!visibleKeys.length) {
       if (q) {
         container.innerHTML = '<div class="empty-msg">No keys match</div>';
-        // reindex once for queries longer than 3 chars
         if (q.length > 3 && !reindexedQueries.has(q)) {
           reindexedQueries.add(q);
           vscode.postMessage({ type: 'reindexAndSearch', query: q });
-          // allow reindexing again after 5s
           setTimeout(() => reindexedQueries.delete(q), 5000);
         }
       } else {
@@ -423,22 +544,28 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
         </div>\`;
       }).join('');
 
+      const searchBtn = \`<button class="icon search-btn" data-key="\${escHtml(key)}" title="Find usages"><svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" style="pointer-events:none"><path fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="m17 17l4 4M3 11a8 8 0 1 0 16 0a8 8 0 0 0-16 0" /></svg></button>\`;
       const editBtn = \`<button class="icon edit-btn" data-key="\${escHtml(key)}" title="Edit"><svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" style="pointer-events:none"><path fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="m14.363 5.652l1.48-1.48a2 2 0 0 1 2.829 0l1.414 1.414a2 2 0 0 1 0 2.828l-1.48 1.48m-4.243-4.242l-9.616 9.615a2 2 0 0 0-.578 1.238l-.242 2.74a1 1 0 0 0 1.084 1.085l2.74-.242a2 2 0 0 0 1.24-.578l9.615-9.616m-4.243-4.242l4.243 4.242" /></svg></button>\`;
       const saveRow = isEditing ? \`<div class="save-row">
         <button class="secondary cancel-btn" data-key="\${escHtml(key)}">Cancel</button>
         <button class="save-btn" data-key="\${escHtml(key)}">Save</button>
       </div>\` : '';
 
-      return \`<div class="key-item">
+      return \`<div class="key-item" data-key-item="\${escHtml(key)}">
         <div class="key-header">
           <span class="key-name">\${escHtml(key)}</span>
-          \${!isEditing ? editBtn : ''}
+          \${!isEditing ? searchBtn + editBtn : ''}
         </div>
         \${localeRows}
         \${saveRow}
       </div>\`;
     }).join('');
 
+    container.querySelectorAll('.search-btn').forEach(btn => {
+      btn.addEventListener('click', () => {
+        vscode.postMessage({ type: 'findUsages', key: btn.dataset.key });
+      });
+    });
     container.querySelectorAll('.edit-btn').forEach(btn => {
       btn.addEventListener('click', () => { editingKeys.add(btn.dataset.key); renderKeys(); });
     });

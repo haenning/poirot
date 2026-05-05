@@ -27,6 +27,8 @@ export function activate(context: vscode.ExtensionContext): void {
     writeCursorConfig(mcpServerPath, settingsPath);
   };
 
+  decorations.onEditKey = (key) => provider.openEditKey(key);
+
   // Auto-load config immediately on activation so decorations work without opening the sidebar
   provider.tryAutoDiscover();
 }

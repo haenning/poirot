@@ -67,6 +67,16 @@ class PoirotCodeLensProvider implements vscode.CodeLensProvider {
         command: "poirot.goToKey",
         arguments: [key],
       }));
+      lenses.push(new vscode.CodeLens(range, {
+        title: "✎ edit",
+        command: "poirot.editKey",
+        arguments: [key],
+      }));
+      lenses.push(new vscode.CodeLens(range, {
+        title: "⌕ find usages",
+        command: "workbench.action.findInFiles",
+        arguments: [{ query: `m.${key}()`, triggerSearch: true, isRegex: false, filesToInclude: "src" }],
+      }));
     }
 
     return lenses;
@@ -76,9 +86,11 @@ class PoirotCodeLensProvider implements vscode.CodeLensProvider {
 export class DecorationManager {
   private readonly _decorationType: vscode.TextEditorDecorationType;
   private readonly _goToKeyCommand: vscode.Disposable;
+  private readonly _editKeyCommand: vscode.Disposable;
   private readonly _codeLensProvider: PoirotCodeLensProvider;
   private _config?: InlangConfig;
   private _localeMap?: LocaleMap;
+  onEditKey?: (key: string) => void;
 
   constructor(context: vscode.ExtensionContext) {
     this._decorationType = vscode.window.createTextEditorDecorationType({
@@ -108,9 +120,18 @@ export class DecorationManager {
       }
     );
 
+    this._editKeyCommand = vscode.commands.registerCommand(
+      "poirot.editKey",
+      (key: string) => {
+        vscode.commands.executeCommand("poirot.sidebar.focus");
+        this.onEditKey?.(key);
+      }
+    );
+
     context.subscriptions.push(
       this._decorationType,
       this._goToKeyCommand,
+      this._editKeyCommand,
       vscode.languages.registerCodeLensProvider(
         [
           { scheme: "file", language: "svelte" },
