@@ -57,14 +57,25 @@ Open the Poirot panel from the activity bar (speech bubble icon).
 
 ### MCP (Cursor / Claude Code)
 
-On activation Poirot writes a `poirot` entry to `~/.cursor/mcp.json` automatically. In Cursor or any MCP-compatible agent, the tool `create_translation_key` is available:
+On activation Poirot writes a `poirot` entry to `~/.cursor/mcp.json` automatically. Four tools are exposed to any MCP-compatible agent:
+
+| Tool | When to use |
+| ---- | ----------- |
+| `create_translation_key` | Create a single key |
+| `create_translation_keys` | Create multiple keys in one call — always prefer this over calling the single-key tool in a loop |
+| `auto_translate` | Translate all missing locale values by running `npm run machine-translate` in the project root — call only once, at the very end of an editing session |
+| `check_paraglide` | Compile paraglide and report missing/orphan keys — use after larger batches of changes |
 
 ```text
-create_translation_key(value: "Submit form")
-→ m.brave_quiet_fox()
+create_translation_keys(entries: [
+  { value: "Submit form" },
+  { value: "Cancel" }
+])
+→ m.brave_quiet_fox()  ← "Submit form"
+→ m.calm_silver_hawk()  ← "Cancel"
 ```
 
-The agent receives the generated key reference and can insert it directly into code.
+The agent receives the generated key references and inserts them directly into code. After all keys are created, it can call `auto_translate` to fill in secondary locales via the paraglide machine-translate script.
 
 ## Project structure expected
 
