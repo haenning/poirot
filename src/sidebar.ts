@@ -284,16 +284,17 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
     color: var(--vscode-foreground);
     padding: 8px;
   }
-  h4 { font-size: 11px; text-transform: uppercase; opacity: 0.6; letter-spacing: 0.05em; }
+  h4 { font-size: 9px; text-transform: uppercase; opacity: 0.5; letter-spacing: 0.07em; }
   input[type="text"] {
     width: 100%;
     background: var(--vscode-input-background);
     color: var(--vscode-input-foreground);
-    border: 1px solid var(--vscode-input-border, transparent);
+    border: 0.5px solid var(--vscode-input-border, rgba(128,128,128,0.2));
+    border-radius: 4px;
     padding: 4px 6px;
     outline: none;
-    font-size: inherit;
-    font-family: inherit;
+    font-size: 10px;
+    font-family: var(--vscode-editor-font-family, monospace);
   }
   input[type="text"]:focus { border-color: var(--vscode-focusBorder); }
   button {
@@ -321,9 +322,36 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
   }
   button.icon:hover { opacity: 1; background: var(--vscode-toolbar-hoverBackground, rgba(128,128,128,0.15)); }
   button.full { width: 100%; margin-bottom: 6px; }
+  button.new-key {
+    background: color-mix(in srgb, var(--vscode-button-background) 40%, transparent);
+    color: var(--vscode-button-foreground);
+    border: 0.5px solid var(--vscode-focusBorder, rgba(60,110,220,0.5));
+    border-radius: 4px;
+    font-family: var(--vscode-editor-font-family, monospace);
+    font-size: 10px;
+    letter-spacing: 0.03em;
+    padding: 5px 0;
+    cursor: pointer;
+    width: 100%;
+    margin-bottom: 6px;
+  }
+  button.new-key:hover { background: color-mix(in srgb, var(--vscode-button-hoverBackground) 50%, transparent); }
+  select {
+    background: var(--vscode-input-background);
+    color: var(--vscode-input-foreground);
+    border: 0.5px solid var(--vscode-input-border, rgba(128,128,128,0.2));
+    border-radius: 4px;
+    padding: 4px 4px;
+    font-size: 10px;
+    font-family: var(--vscode-editor-font-family, monospace);
+    outline: none;
+    cursor: pointer;
+    flex-shrink: 0;
+  }
+  select:focus { border-color: var(--vscode-focusBorder); }
 
   /* Config accordion */
-  details { margin-bottom: 10px; }
+  details { margin-bottom: 10px; border-bottom: 0.5px solid var(--vscode-panel-border, rgba(128,128,128,0.1)); padding-bottom: 6px; }
   summary {
     cursor: pointer;
     list-style: none;
@@ -366,19 +394,27 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
 
   .key-item {
     margin-bottom: 6px;
-    border-bottom: 1px solid var(--vscode-panel-border, rgba(128,128,128,0.2));
+    border-bottom: 0.5px solid var(--vscode-panel-border, rgba(128,128,128,0.1));
     padding-bottom: 6px;
   }
   .key-header { display: flex; align-items: center; gap: 4px; margin-bottom: 4px; }
-  .key-name { font-size: 11px; font-family: var(--vscode-editor-font-family, monospace); flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .key-name { font-size: 10px; font-family: var(--vscode-editor-font-family, monospace); flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .locale-row { display: flex; gap: 4px; align-items: baseline; margin-bottom: 3px; }
-  .locale-label { width: 24px; flex-shrink: 0; font-size: 10px; opacity: 0.6; font-weight: bold; }
-  .locale-val { flex: 1; font-size: 11px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; opacity: 0.9; }
-  .locale-val.empty { opacity: 0.35; font-style: italic; }
-  .locale-row input { flex: 1; font-size: 11px; }
+  .locale-label { width: 20px; flex-shrink: 0; font-size: 9px; opacity: 0.45; font-weight: bold; font-family: var(--vscode-editor-font-family, monospace); }
+  .locale-val { flex: 1; font-size: 10px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; opacity: 0.45; }
+  .locale-val.translated { color: var(--vscode-testing-iconPassed, #78c88c); opacity: 1; }
+  .locale-val.empty { opacity: 0.25; font-style: italic; }
+  .locale-row input { flex: 1; font-size: 10px; }
   .save-row { margin-top: 4px; display: flex; justify-content: flex-end; gap: 4px; }
-  .error { color: var(--vscode-errorForeground); font-size: 11px; margin-top: 4px; }
-  .empty-msg { opacity: 0.5; font-size: 11px; }
+  .error { color: var(--vscode-errorForeground); font-size: 10px; margin-top: 4px; }
+  .empty-msg { opacity: 0.5; font-size: 10px; }
+  .keys-list-wrap { position: relative; }
+  .keys-list-wrap::after {
+    content: ''; position: sticky; bottom: 0; display: block;
+    height: 24px; margin-top: -24px;
+    background: linear-gradient(transparent, var(--vscode-sideBar-background, var(--vscode-editor-background, #1e1e1e)));
+    pointer-events: none;
+  }
 </style>
 </head>
 <body>
@@ -387,7 +423,7 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
   <summary>
     <span class="chevron">▶</span>
     <h4 style="margin:0">Config</h4>
-    <span id="configSummaryPath" style="font-size:10px;opacity:0.45;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;flex:1;margin-left:4px;font-family:var(--vscode-editor-font-family,monospace)"></span>
+    <span id="configSummaryPath" style="font-size:9px;opacity:0.6;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;flex:1;margin-left:4px;font-family:var(--vscode-editor-font-family,monospace)"></span>
   </summary>
   <div class="config-body">
     <div id="candidateList" class="candidate-list"></div>
@@ -403,15 +439,21 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
   <div class="keys-top">
     <h4>Keys</h4>
   </div>
-  <button id="newKeyBtn" class="full" title="New Translation Key (⌘⇧T)">+ New Key</button>
-  <input id="searchInput" type="text" placeholder="Search all keys…" style="margin-bottom:8px" />
-  <div id="keysList"></div>
+  <button id="newKeyBtn" class="new-key" title="New Translation Key (⌘⇧T)">+ New Key</button>
+  <div class="search-row" style="display:flex;gap:4px;margin-bottom:8px">
+    <input id="searchInput" type="text" placeholder="Search keys…" style="flex:1;min-width:0" />
+    <select id="searchLocale" title="Search in locale">
+      <option value="__all__">all</option>
+    </select>
+  </div>
+  <div class="keys-list-wrap"><div id="keysList"></div></div>
 </section>
 
 <script>
   const vscode = acquireVsCodeApi();
   let state = { configPath: '', candidates: [], locales: [], baseLocale: '', keys: [], currentFileKeys: [], localeMap: {} };
   let searchQuery = '';
+  let searchLocale = '__all__';
   let searchTimer = null;
   const editingKeys = new Set();
   const reindexedQueries = new Set();
@@ -432,12 +474,17 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
     clearTimeout(searchTimer);
     searchTimer = setTimeout(() => renderKeys(), 150);
   });
+  document.getElementById('searchLocale').addEventListener('change', (e) => {
+    searchLocale = e.target.value;
+    renderKeys();
+  });
 
   window.addEventListener('message', (e) => {
     const msg = e.data;
     if (msg.type === 'state') {
       state = msg;
       renderConfig();
+      renderLocaleDropdown();
       renderKeys();
     } else if (msg.type === 'error') {
       document.getElementById('configError').textContent = msg.message;
@@ -488,20 +535,36 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
     });
   }
 
+  function renderLocaleDropdown() {
+    const sel = document.getElementById('searchLocale');
+    const { locales } = state;
+    // preserve current selection if still valid
+    const prev = searchLocale;
+    sel.innerHTML = '<option value="__all__">all</option>' +
+      locales.map(l => \`<option value="\${escHtml(l)}">\${escHtml(l)}</option>\`).join('');
+    if (locales.includes(prev)) {
+      sel.value = prev;
+    } else {
+      searchLocale = '__all__';
+      sel.value = '__all__';
+    }
+  }
+
   function displayLocales(baseLocale, allLocales) {
     const others = allLocales.filter(l => l !== baseLocale).sort().slice(0, 2);
     return [baseLocale, ...others];
   }
 
   function getVisibleKeys() {
-    const { currentFileKeys, localeMap, baseLocale } = state;
+    const { currentFileKeys, localeMap, baseLocale, locales } = state;
     const q = searchQuery.trim().toLowerCase();
     if (!q) return currentFileKeys;
     const allKeys = Object.keys(localeMap[baseLocale] || {}).filter(k => k !== '$schema');
-    return allKeys.filter(k =>
-      k.toLowerCase().includes(q) ||
-      String((localeMap[baseLocale] || {})[k] ?? '').toLowerCase().includes(q)
-    );
+    const searchIn = searchLocale === '__all__' ? locales : [searchLocale];
+    return allKeys.filter(k => {
+      if (k.toLowerCase().includes(q)) return true;
+      return searchIn.some(l => String((localeMap[l] || {})[k] ?? '').toLowerCase().includes(q));
+    });
   }
 
   function renderKeys() {
@@ -538,9 +601,10 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
           </div>\`;
         }
         const isEmpty = !val;
+        const valClass = isEmpty ? 'empty' : 'translated';
         return \`<div class="locale-row">
           <span class="locale-label">\${escHtml(locale)}</span>
-          <span class="locale-val\${isEmpty ? ' empty' : ''}">\${isEmpty ? 'empty' : escHtml(val)}</span>
+          <span class="locale-val \${valClass}">\${isEmpty ? 'empty' : escHtml(val)}</span>
         </div>\`;
       }).join('');
 

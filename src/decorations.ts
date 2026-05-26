@@ -211,7 +211,7 @@ export class DecorationManager {
             backgroundColor: new vscode.ThemeColor("editor.background"),
             border: "1px solid",
             borderColor: new vscode.ThemeColor("editorCodeLens.foreground"),
-            borderRadius: "3px",
+            borderRadius: "9px",
             fontStyle: "italic",
             margin: "0 0 0 8px",
           },

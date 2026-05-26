@@ -1,0 +1,664 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Poirot</title>
+<link href="https://fonts.googleapis.com/css2?family=DM+Mono:ital,wght@0,300;0,400;0,500;1,300&family=DM+Sans:wght@300;400;500&display=swap" rel="stylesheet">
+<style>
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+html, body { width: 100%; height: 100%; background: #000; overflow: hidden; }
+
+.outer {
+  width: 100vw; height: 100vh;
+  display: flex; align-items: center; justify-content: center;
+  background: #000; overflow: hidden;
+}
+.scaler { width: 1200px; height: 600px; transform-origin: center center; }
+
+.canvas {
+  width: 1200px; height: 600px;
+  background: #000;
+  position: relative; overflow: hidden;
+  display: flex; align-items: center; justify-content: center;
+  padding: 44px;
+}
+.canvas::before {
+  content: ''; position: absolute; inset: 0;
+  background-image:
+    linear-gradient(rgba(30,60,120,0.07) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(30,60,120,0.07) 1px, transparent 1px);
+  background-size: 48px 48px; pointer-events: none;
+}
+.canvas::after {
+  content: ''; position: absolute; left: 50%; top: 50%;
+  transform: translate(-50%,-50%);
+  width: 900px; height: 500px;
+  background: radial-gradient(ellipse, rgba(25,65,160,0.12) 0%, transparent 70%);
+  pointer-events: none;
+}
+
+/* panels */
+.panel {
+  height: 512px; background: #0d0d0d;
+  border: 0.5px solid rgba(255,255,255,0.09);
+  overflow: hidden; position: relative; z-index: 2;
+  display: flex; flex-direction: column;
+}
+.panel-bar {
+  height: 32px; background: #141414;
+  border-bottom: 0.5px solid rgba(255,255,255,0.06);
+  display: flex; align-items: center; padding: 0 12px; gap: 7px; flex-shrink: 0;
+}
+.dot { width: 9px; height: 9px; border-radius: 50%; }
+.dot-r { background: #3a1a1a; }
+.dot-y { background: #3a3010; }
+.dot-g { background: #0f2e14; }
+.bar-title {
+  font-family: 'DM Mono', monospace; font-size: 10px;
+  color: rgba(255,255,255,0.3); margin-left: 8px; letter-spacing: 0.04em;
+}
+
+/* panel A - key manager */
+.panel-a {
+  width: 196px; border-radius: 10px 0 0 10px;
+  box-shadow: 0 0 0 0.5px rgba(40,80,200,0.15);
+}
+.panel-a .panel-body { flex:1; overflow:hidden; display:flex; flex-direction:column; }
+.km-section {
+  padding: 8px 10px 4px;
+  font-family: 'DM Mono', monospace; font-size: 9px;
+  color: rgba(255,255,255,0.2); letter-spacing: 0.08em; text-transform: uppercase;
+}
+.km-config {
+  padding: 2px 10px 8px;
+  font-family: 'DM Mono', monospace; font-size: 9px;
+  color: rgba(80,120,220,0.6); border-bottom: 0.5px solid rgba(255,255,255,0.05);
+}
+.km-new-btn {
+  margin: 8px 10px 6px;
+  background: rgba(40,80,200,0.25); border: 0.5px solid rgba(60,110,220,0.4);
+  border-radius: 4px; padding: 5px 0; text-align: center;
+  font-family: 'DM Mono', monospace; font-size: 10px; color: rgba(100,150,240,0.9);
+}
+.km-search {
+  margin: 0 10px 6px; background: #111;
+  border: 0.5px solid rgba(255,255,255,0.07); border-radius: 4px;
+  padding: 4px 8px; font-family: 'DM Mono', monospace; font-size: 9px;
+  color: rgba(255,255,255,0.18);
+}
+.km-keys { flex:1; overflow:hidden; }
+.km-key {
+  padding: 5px 10px; border-bottom: 0.5px solid rgba(255,255,255,0.04);
+  display: none;
+}
+.km-key.visible { display: block; }
+.km-key-name {
+  font-family: 'DM Mono', monospace; font-size: 9.5px;
+  color: rgba(150,180,255,0.75); margin-bottom: 3px;
+}
+.km-locale {
+  font-family: 'DM Mono', monospace; font-size: 9px;
+  display: flex; gap: 4px; line-height: 1.65;
+}
+.loc-tag { color: rgba(255,255,255,0.2); width: 14px; flex-shrink:0; }
+.loc-val { color: rgba(255,255,255,0.4); transition: color 0.3s; }
+.loc-val.translated { color: rgba(120,200,140,0.75); }
+@keyframes locPop {
+  0%   { background: rgba(40,180,100,0.18); }
+  100% { background: transparent; }
+}
+.loc-val.pop { animation: locPop 1.2s ease; }
+
+/* panel B - editor */
+.panel-b {
+  width: 464px; border-left: none; border-right: none; border-radius: 0;
+  box-shadow: 0 0 60px rgba(25,65,180,0.14);
+}
+.tab {
+  font-family: 'DM Mono', monospace; font-size: 10px;
+  color: rgba(255,255,255,0.25); padding: 0 8px; height: 100%;
+  display: flex; align-items: center; border-right: 0.5px solid rgba(255,255,255,0.05);
+}
+.tab.active { color: rgba(255,255,255,0.65); border-bottom: 1px solid rgba(80,130,220,0.7); }
+.editor-body { display:flex; flex:1; overflow:hidden; }
+.gutter {
+  width: 36px; background: #0d0d0d; padding-top: 14px;
+  display: flex; flex-direction: column;
+  border-right: 0.5px solid rgba(255,255,255,0.04); flex-shrink: 0;
+}
+.ln {
+  font-family: 'DM Mono', monospace; font-size: 10px;
+  color: rgba(255,255,255,0.13); text-align: right;
+  padding-right: 8px; line-height: 20px; height: 20px;
+}
+.ln.hl { color: rgba(255,255,255,0.4); background: rgba(40,80,200,0.08); }
+.code-area { flex:1; padding: 14px 0 14px 10px; overflow:hidden; }
+.cl {
+  height: 20px; display: flex; align-items: center;
+  font-family: 'DM Mono', monospace; font-size: 11px;
+  white-space: nowrap; line-height: 20px;
+}
+.cl.hl-line { background: rgba(40,80,200,0.06); margin-left:-10px; padding-left:10px; }
+.kw  { color: #6e86c8; }
+.fn  { color: #9c7dde; }
+.op  { color: rgba(255,255,255,0.3); }
+.tag { color: #5fa878; }
+.str { color: #e8896a; }
+.var { color: #7ec4a8; }
+.codelens {
+  font-family: 'DM Mono', monospace; font-size: 9px;
+  color: rgba(110,134,200,0.45); height: 16px; line-height: 16px;
+  display: flex; align-items: center;
+  opacity: 0; transition: opacity 0.4s ease;
+}
+.codelens.visible { opacity: 1; }
+.decoration {
+  display: inline-flex; align-items: center;
+  margin-left: 6px; padding: 0 7px;
+  background: rgba(30,80,180,0.2); border: 0.5px solid rgba(60,110,220,0.45);
+  border-radius: 9px; font-family: 'DM Mono', monospace; font-size: 9px;
+  color: #7ea8e8; opacity: 0; transition: opacity 0.4s ease;
+}
+.decoration.visible { opacity: 1; }
+/* string highlight flash before substitution */
+@keyframes strFlash {
+  0%,100% { background: transparent; }
+  50%     { background: rgba(232,137,106,0.18); border-radius: 3px; }
+}
+.str-flash { animation: strFlash 0.6s ease 2; }
+
+/* panel C - agent */
+.panel-c {
+  width: 300px; border-radius: 0 10px 10px 0;
+  box-shadow: 0 0 0 0.5px rgba(40,80,200,0.15);
+}
+.ai-body {
+  flex:1; overflow:hidden; display:flex; flex-direction:column;
+  padding: 10px 12px; gap: 0; position: relative;
+}
+.ai-prompt {
+  font-family: 'DM Mono', monospace; font-size: 10px;
+  color: rgba(255,255,255,0.25); padding: 4px 0 10px;
+  border-bottom: 0.5px solid rgba(255,255,255,0.05);
+  margin-bottom: 8px; line-height: 1.6; min-height: 48px;
+}
+.ai-prompt .agent-label { color: rgba(100,150,240,0.7); }
+.ai-thinking {
+  font-family: 'DM Mono', monospace; font-size: 9px;
+  color: rgba(255,255,255,0.2); font-style: italic;
+  margin-bottom: 8px; line-height: 1.6; min-height: 14px;
+}
+.ai-call {
+  margin-bottom: 8px; opacity: 0; transform: translateY(4px);
+  transition: opacity 0.3s ease, transform 0.3s ease;
+}
+.ai-call.show { opacity: 1; transform: translateY(0); }
+.ai-call-header {
+  font-family: 'DM Mono', monospace; font-size: 9px;
+  color: rgba(120,180,120,0.6); margin-bottom: 4px;
+  display: flex; align-items: center; gap: 6px;
+}
+.spinner {
+  width: 8px; height: 8px;
+  border: 1px solid rgba(80,200,120,0.2);
+  border-top-color: rgba(80,200,120,0.8);
+  border-radius: 50%; animation: spin 0.6s linear infinite; flex-shrink: 0;
+}
+@keyframes spin { to { transform: rotate(360deg); } }
+.check { font-size: 9px; color: rgba(80,200,120,0.9); }
+.ai-call-body {
+  background: rgba(255,255,255,0.03);
+  border: 0.5px solid rgba(255,255,255,0.06);
+  border-radius: 4px; padding: 5px 8px;
+}
+.ai-arg { font-family: 'DM Mono', monospace; font-size: 9px; line-height: 1.7; }
+.ai-key { color: rgba(110,134,200,0.7); }
+.ai-val { color: rgba(232,137,106,0.8); }
+.ai-results {
+  margin-top: 4px; opacity: 0; transition: opacity 0.3s ease;
+}
+.ai-results.show { opacity: 1; }
+.ai-result-line {
+  font-family: 'DM Mono', monospace; font-size: 9px;
+  color: rgba(80,200,120,0.6); line-height: 1.7;
+  display: flex; gap: 4px; align-items: baseline;
+}
+.ai-result-line::before { content: '←'; flex-shrink:0; }
+.ai-result-comment { color: rgba(255,255,255,0.2); }
+
+.ai-confirmation {
+  margin-top: 6px; padding-top: 8px;
+  border-top: 0.5px solid rgba(255,255,255,0.05);
+  font-family: 'DM Mono', monospace; font-size: 9px;
+  color: rgba(255,255,255,0.35); line-height: 1.7;
+  opacity: 0; transition: opacity 0.4s ease;
+}
+.ai-confirmation.show { opacity: 1; }
+.ai-conf-green { color: rgba(80,200,120,0.7); }
+
+.ai-actions {
+  margin-top: 8px; display: flex; gap: 6px; align-items: center;
+  opacity: 0; transition: opacity 0.4s ease;
+}
+.ai-actions.show { opacity: 1; }
+.ai-btn {
+  font-family: 'DM Mono', monospace; font-size: 9px;
+  padding: 4px 10px; border-radius: 4px; cursor: default;
+  background: rgba(40,80,200,0.3); border: 0.5px solid rgba(60,110,220,0.5);
+  color: rgba(120,160,255,0.9);
+}
+.ai-btn.secondary {
+  background: rgba(255,255,255,0.04); border: 0.5px solid rgba(255,255,255,0.1);
+  color: rgba(255,255,255,0.3);
+}
+
+.ai-fade {
+  position: absolute; bottom: 0; left: 0; right: 0; height: 36px;
+  background: linear-gradient(transparent, #0d0d0d); pointer-events: none;
+}
+
+.cursor-blink {
+  display: inline-block; width: 5px; height: 10px;
+  background: rgba(80,130,220,0.8); border-radius: 1px;
+  vertical-align: middle; animation: blink 1s step-end infinite;
+}
+@keyframes blink { 0%,100%{opacity:1} 50%{opacity:0} }
+</style>
+</head>
+<body>
+<div class="outer">
+  <div class="scaler" id="scaler">
+    <div class="canvas">
+
+      <!-- PANEL A: Key Manager -->
+      <div class="panel panel-a">
+        <div class="panel-bar">
+          <div class="dot dot-r"></div><div class="dot dot-y"></div><div class="dot dot-g"></div>
+          <span class="bar-title">POIROT</span>
+        </div>
+        <div class="panel-body">
+          <div class="km-section">Config</div>
+          <div class="km-config">project.inlang/settings.json</div>
+          <div class="km-section" style="padding-top:10px">Keys</div>
+          <div class="km-new-btn">+ New Key</div>
+          <div class="km-search">Search all keys…</div>
+          <div class="km-keys" id="kmKeys"></div>
+        </div>
+      </div>
+
+      <!-- PANEL B: Editor -->
+      <div class="panel panel-b">
+        <div class="panel-bar">
+          <div class="dot dot-r"></div><div class="dot dot-y"></div><div class="dot dot-g"></div>
+          <div class="tab">index.svelte</div>
+          <div class="tab active">checkout.svelte</div>
+          <div class="tab">+page.svelte</div>
+        </div>
+        <div class="editor-body">
+          <div class="gutter" id="gutter"></div>
+          <div class="code-area" id="codeArea"></div>
+        </div>
+      </div>
+
+      <!-- PANEL C: Agent -->
+      <div class="panel panel-c">
+        <div class="panel-bar">
+          <div class="dot dot-r"></div><div class="dot dot-y"></div><div class="dot dot-g"></div>
+          <span class="bar-title">Agent · Cursor</span>
+        </div>
+        <div class="ai-body" id="aiBody">
+          <div class="ai-prompt">
+            <span class="agent-label">User: </span><span id="promptText"></span><span class="cursor-blink" id="promptCursor"></span>
+          </div>
+          <div class="ai-thinking" id="aiThinking"></div>
+          <div id="aiCalls"></div>
+          <div class="ai-confirmation" id="aiConf"></div>
+          <div class="ai-actions" id="aiActions">
+            <div class="ai-btn">run check_paraglide</div>
+            <div class="ai-btn secondary">done</div>
+          </div>
+          <div class="ai-fade"></div>
+        </div>
+      </div>
+
+    </div>
+  </div>
+</div>
+<script>
+// ── data ──────────────────────────────────────────────────────────────────────
+const PROMPT = "substitute all hardcoded strings with paraglide keys, then auto-translate";
+
+const KEYS = [
+  { name: "sunny_clock_amber_desk",  value: "Checkout",           en: "Checkout",           de: "Zur Kasse",         fr: "Paiement"          },
+  { name: "lazy_panda_blue_heaven",  value: "Submit form",        en: "Submit form",         de: "Absenden",          fr: "Soumettre"          },
+  { name: "wild_stone_quiet_fox",    value: "Your cart is empty", en: "Your cart is empty",  de: "Warenkorb leer",    fr: "Panier vide"        },
+  { name: "calm_river_salt_wind",    value: "Email address",      en: "Email address",       de: "E-Mail-Adresse",    fr: "Adresse e-mail"     },
+  { name: "silver_monk_open_door",   value: "New Resource",       en: "New Resource",        de: "Neue Ressource",    fr: "Nouvelle ressource" },
+];
+
+// Code lines: [lineNo, 'raw'|'key', content]
+// raw = plain svelte with hardcoded string
+// key = after substitution, shows m.key() + decoration
+const LINES = [
+  [238, 'static', `<span class="tag">&lt;div</span> <span class="kw">class</span><span class="op">=</span><span class="str">"flex shrink-0 gap-2"</span><span class="tag">&gt;</span>`, null],
+  [239, 'static', `&nbsp;&nbsp;<span class="tag">&lt;Button</span> <span class="kw">variant</span><span class="op">=</span><span class="str">"outline"</span><span class="tag">&gt;</span>`, null],
+  [240, 'codelens', '', 0],
+  [241, 'str',    `&nbsp;&nbsp;&nbsp;&nbsp;<span class="tag">&lt;p&gt;</span><span class="str" id="s0">Checkout</span><span class="tag">&lt;/p&gt;</span>`, 0],
+  [242, 'static', `&nbsp;&nbsp;<span class="tag">&lt;/Button&gt;</span>`, null],
+  [243, 'static', `&nbsp;&nbsp;<span class="tag">&lt;Button</span> <span class="kw">variant</span><span class="op">=</span><span class="str">"secondary"</span><span class="tag">&gt;</span>`, null],
+  [244, 'codelens', '', 1],
+  [245, 'str',    `&nbsp;&nbsp;&nbsp;&nbsp;<span class="tag">&lt;p&gt;</span><span class="str" id="s1">Submit form</span><span class="tag">&lt;/p&gt;</span>`, 1],
+  [246, 'static', `&nbsp;&nbsp;<span class="tag">&lt;/Button&gt;</span>`, null],
+  [247, 'static', `&nbsp;&nbsp;<span class="tag">&lt;p&gt;</span>`, null],
+  [248, 'codelens', '', 2],
+  [249, 'str',    `&nbsp;&nbsp;&nbsp;&nbsp;<span class="str" id="s2">Your cart is empty</span>`, 2],
+  [250, 'static', `&nbsp;&nbsp;<span class="tag">&lt;/p&gt;</span>`, null],
+  [251, 'static', `&nbsp;&nbsp;<span class="tag">&lt;label&gt;</span>`, null],
+  [252, 'codelens', '', 3],
+  [253, 'str',    `&nbsp;&nbsp;&nbsp;&nbsp;<span class="str" id="s3">Email address</span>`, 3],
+  [254, 'static', `&nbsp;&nbsp;<span class="tag">&lt;/label&gt;</span>`, null],
+  [255, 'static', `&nbsp;&nbsp;<span class="tag">&lt;span&gt;</span>`, null],
+  [256, 'codelens', '', 4],
+  [257, 'str',    `&nbsp;&nbsp;&nbsp;&nbsp;<span class="str" id="s4">New Resource</span>`, 4],
+  [258, 'static', `&nbsp;&nbsp;<span class="tag">&lt;/span&gt;</span>`, null],
+];
+
+// ── scaling ───────────────────────────────────────────────────────────────────
+function scaleToFit() {
+  const s = document.getElementById('scaler');
+  const scale = Math.min(window.innerWidth / 1200, window.innerHeight / 600);
+  s.style.transform = `scale(${scale})`;
+}
+window.addEventListener('resize', scaleToFit);
+scaleToFit();
+
+// ── build editor ──────────────────────────────────────────────────────────────
+function buildEditor() {
+  const gutter = document.getElementById('gutter');
+  const code   = document.getElementById('codeArea');
+  gutter.innerHTML = ''; code.innerHTML = '';
+
+  LINES.forEach(([ln, type, html, di]) => {
+    // gutter
+    const g = document.createElement('div');
+    g.className = 'ln' + (type === 'str' ? ' hl' : '');
+    g.textContent = type === 'codelens' ? '' : ln;
+    gutter.appendChild(g);
+
+    // code line
+    const cl = document.createElement('div');
+    if (type === 'codelens') {
+      cl.className = 'cl codelens'; cl.id = `cl_${di}`;
+      cl.innerHTML = '↗ open in en.json &nbsp;·&nbsp; edit &nbsp;·&nbsp; find usages';
+    } else {
+      cl.className = 'cl' + (type === 'str' ? ' hl-line' : '');
+      cl.innerHTML = html;
+      if (type === 'str') {
+        // decoration span (hidden initially)
+        const dec = document.createElement('span');
+        dec.className = 'decoration'; dec.id = `dec_${di}`;
+        cl.appendChild(dec);
+      }
+    }
+    code.appendChild(cl);
+  });
+}
+
+// ── build KM ──────────────────────────────────────────────────────────────────
+function buildKM() {
+  const c = document.getElementById('kmKeys'); c.innerHTML = '';
+  KEYS.forEach((k, i) => {
+    const el = document.createElement('div');
+    el.className = 'km-key'; el.id = `km_${i}`;
+    el.innerHTML = `
+      <div class="km-key-name">${k.name}</div>
+      <div class="km-locale"><span class="loc-tag">en</span><span class="loc-val" id="km_en_${i}">${k.en}</span></div>
+      <div class="km-locale"><span class="loc-tag">de</span><span class="loc-val" id="km_de_${i}">—</span></div>
+      <div class="km-locale"><span class="loc-tag">fr</span><span class="loc-val" id="km_fr_${i}">—</span></div>
+    `;
+    c.appendChild(el);
+  });
+}
+
+// ── helpers ───────────────────────────────────────────────────────────────────
+const sleep = ms => new Promise(r => setTimeout(r, ms));
+
+async function typeText(el, text, speed = 24) {
+  for (const ch of text) {
+    el.textContent += ch;
+    await sleep(speed + Math.random() * 18);
+  }
+}
+
+async function typeThinking(text, speed = 18) {
+  const el = document.getElementById('aiThinking');
+  el.textContent = '';
+  for (const ch of text) {
+    el.textContent += ch;
+    await sleep(speed + Math.random() * 12);
+  }
+}
+
+function resetAll() {
+  // editor: restore raw strings, hide codelens + decorations
+  KEYS.forEach((k, i) => {
+    const s = document.getElementById(`s${i}`);
+    if (s) { s.textContent = k.value; s.className = 'str'; }
+    const dec = document.getElementById(`dec_${i}`);
+    if (dec) { dec.textContent = ''; dec.classList.remove('visible'); }
+    const cl = document.getElementById(`cl_${i}`);
+    if (cl) cl.classList.remove('visible');
+    // KM
+    const km = document.getElementById(`km_${i}`);
+    if (km) km.classList.remove('visible');
+    const de = document.getElementById(`km_de_${i}`);
+    const fr = document.getElementById(`km_fr_${i}`);
+    if (de) { de.textContent = '—'; de.classList.remove('translated','pop'); }
+    if (fr) { fr.textContent = '—'; fr.classList.remove('translated','pop'); }
+  });
+  // agent
+  document.getElementById('promptText').textContent = '';
+  document.getElementById('promptCursor').style.display = 'inline-block';
+  document.getElementById('aiThinking').textContent = '';
+  document.getElementById('aiCalls').innerHTML = '';
+  document.getElementById('aiConf').textContent = '';
+  document.getElementById('aiConf').classList.remove('show');
+  document.getElementById('aiActions').classList.remove('show');
+}
+
+// ── main loop ─────────────────────────────────────────────────────────────────
+async function runLoop() {
+  buildEditor();
+  buildKM();
+
+  while (true) {
+    resetAll();
+    await sleep(600);
+
+    // 1. type prompt
+    await typeText(document.getElementById('promptText'), PROMPT, 22);
+    document.getElementById('promptCursor').style.display = 'none';
+    await sleep(400);
+
+    // 2. thinking — scanning
+    await typeThinking('scanning checkout.svelte... found 5 hardcoded strings', 16);
+    await sleep(500);
+
+    // 3. flash strings in editor
+    for (let i = 0; i < 5; i++) {
+      const s = document.getElementById(`s${i}`);
+      if (s) s.classList.add('str-flash');
+    }
+    await sleep(1400);
+
+    // 4. create_translation_keys bulk call
+    document.getElementById('aiThinking').textContent = '';
+    const callEl = document.createElement('div');
+    callEl.className = 'ai-call';
+    callEl.innerHTML = `
+      <div class="ai-call-header">
+        <span class="spinner" id="bulk_spin"></span>
+        create_translation_keys
+      </div>
+      <div class="ai-call-body">
+        <div class="ai-arg"><span class="ai-key">entries: </span><span class="ai-val">[</span></div>
+        ${KEYS.map(k => `<div class="ai-arg" style="padding-left:10px"><span class="ai-val">"${k.value}"</span></div>`).join('')}
+        <div class="ai-arg"><span class="ai-val">]</span></div>
+      </div>
+      <div class="ai-results" id="bulkResults">
+        ${KEYS.map(k => `
+          <div class="ai-result-line">
+            <span>${k.name}</span>
+            <span class="ai-result-comment">&nbsp;← "${k.value}"</span>
+          </div>`).join('')}
+      </div>
+    `;
+    document.getElementById('aiCalls').appendChild(callEl);
+    await sleep(30);
+    callEl.classList.add('show');
+    await sleep(1100); // bulk spinner time
+
+    // resolve bulk
+    const spin = document.getElementById('bulk_spin');
+    if (spin) spin.outerHTML = `<span class="check">✓</span>`;
+    document.getElementById('bulkResults').classList.add('show');
+    await sleep(300);
+
+    // 5. all keys appear in editor + KM simultaneously
+    for (let i = 0; i < 5; i++) {
+      // swap string → m.key() in editor
+      const s = document.getElementById(`s${i}`);
+      if (s) {
+        const parent = s.parentElement;
+        // replace str span with m.key() markup
+        const keySpan = document.createElement('span');
+        keySpan.innerHTML = `<span class="op">{</span><span class="fn">m</span><span class="op">.</span><span class="var">${KEYS[i].name}</span><span class="op">()}</span>`;
+        parent.replaceChild(keySpan, s);
+      }
+      // codelens
+      const cl = document.getElementById(`cl_${i}`);
+      if (cl) cl.classList.add('visible');
+      // decoration — en value only
+      const dec = document.getElementById(`dec_${i}`);
+      if (dec) { dec.textContent = KEYS[i].en; dec.classList.add('visible'); }
+      // KM: show with en only
+      const km = document.getElementById(`km_${i}`);
+      if (km) km.classList.add('visible');
+    }
+    await sleep(800);
+
+    // 6. auto_translate call
+    const transEl = document.createElement('div');
+    transEl.className = 'ai-call';
+    transEl.innerHTML = `
+      <div class="ai-call-header">
+        <span class="spinner" id="trans_spin"></span>
+        auto_translate
+      </div>
+      <div class="ai-call-body">
+        <div class="ai-arg"><span class="ai-key">locales: </span><span class="ai-val">["de", "fr"]</span></div>
+      </div>
+      <div class="ai-results" id="transResults">
+        <div class="ai-result-line"><span>translated 5 keys → de, fr</span></div>
+      </div>
+    `;
+    document.getElementById('aiCalls').appendChild(transEl);
+    await sleep(30);
+    transEl.classList.add('show');
+    await sleep(1400); // translate spinner
+
+    const tSpin = document.getElementById('trans_spin');
+    if (tSpin) tSpin.outerHTML = `<span class="check">✓</span>`;
+    document.getElementById('transResults').classList.add('show');
+    await sleep(300);
+
+    // 7. fill de/fr in KM with pop
+    for (let i = 0; i < 5; i++) {
+      await sleep(80);
+      const de = document.getElementById(`km_de_${i}`);
+      const fr = document.getElementById(`km_fr_${i}`);
+      if (de) { de.textContent = KEYS[i].de; de.classList.add('translated','pop'); }
+      if (fr) { fr.textContent = KEYS[i].fr; fr.classList.add('translated','pop'); }
+    }
+    await sleep(400);
+
+    // 8. confirmation + show button
+    const conf = document.getElementById('aiConf');
+    conf.innerHTML = `<span class="ai-conf-green">✓ substituted 5/5 strings</span><br><span class="ai-conf-green">✓ translated de, fr</span><br>running check_paraglide…`;
+    conf.classList.add('show');
+    await sleep(300);
+    document.getElementById('aiActions').classList.add('show');
+    await sleep(500);
+
+    // 9. check_paraglide call — auto fires
+    const checkEl = document.createElement('div');
+    checkEl.className = 'ai-call';
+    checkEl.innerHTML = `
+      <div class="ai-call-header">
+        <span class="spinner" id="check_spin"></span>
+        check_paraglide
+      </div>
+      <div class="ai-call-body">
+        <div class="ai-arg"><span class="ai-key">compiling paraglide…</span></div>
+      </div>
+      <div class="ai-results" id="checkResults">
+        <div class="ai-result-line"><span>0 missing keys · 0 orphans · all good</span></div>
+      </div>
+    `;
+    document.getElementById('aiCalls').appendChild(checkEl);
+    await sleep(30);
+    checkEl.classList.add('show');
+    await sleep(1200);
+
+    const cSpin = document.getElementById('check_spin');
+    if (cSpin) cSpin.outerHTML = `<span class="check">✓</span>`;
+    document.getElementById('checkResults').classList.add('show');
+    await sleep(200);
+
+    // update confirmation text to final state
+    conf.innerHTML = `<span class="ai-conf-green">✓ substituted 5/5 strings</span><br><span class="ai-conf-green">✓ translated de, fr</span><br><span class="ai-conf-green">✓ check_paraglide — all good</span>`;
+
+    // swap button to "done" only
+    const actions = document.getElementById('aiActions');
+    actions.innerHTML = `<div class="ai-btn secondary">done</div>`;
+
+    // 10. hold end state — 7s
+    await sleep(7000);
+
+    // 11. rewind — fast
+    actions.classList.remove('show');
+    conf.classList.remove('show');
+    await sleep(200);
+
+    // hide de/fr in KM
+    for (let i = KEYS.length - 1; i >= 0; i--) {
+      const de = document.getElementById(`km_de_${i}`);
+      const fr = document.getElementById(`km_fr_${i}`);
+      if (de) { de.textContent = '—'; de.classList.remove('translated','pop'); }
+      if (fr) { fr.textContent = '—'; fr.classList.remove('translated','pop'); }
+      await sleep(50);
+    }
+
+    // hide KM keys + editor decorations in reverse
+    for (let i = KEYS.length - 1; i >= 0; i--) {
+      const km = document.getElementById(`km_${i}`);
+      if (km) km.classList.remove('visible');
+      const dec = document.getElementById(`dec_${i}`);
+      if (dec) { dec.classList.remove('visible'); }
+      const cl = document.getElementById(`cl_${i}`);
+      if (cl) cl.classList.remove('visible');
+      await sleep(60);
+    }
+
+    await sleep(300);
+    // full rebuild to restore raw strings
+    buildEditor();
+    await sleep(500);
+  }
+}
+
+runLoop();
+</script>
+</body>
+</html>
