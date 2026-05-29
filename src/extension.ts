@@ -1,11 +1,15 @@
 import * as vscode from "vscode";
 import { SidebarProvider } from "./sidebar";
 import { DecorationManager } from "./decorations";
-import { spawnMcpServer, writeCursorConfig } from "./mcp-spawn";
+import { spawnMcpServer, stopMcpServer, restartMcpServer, writeCursorConfig } from "./mcp-spawn";
+
+let mcpServerPath = "";
+let reloadHandler: (() => void) | undefined;
 
 export function activate(context: vscode.ExtensionContext): void {
+  mcpServerPath = context.asAbsolutePath("dist/mcp-server.js");
   const decorations = new DecorationManager(context);
-  const provider = new SidebarProvider(context, decorations);
+  const provider = new SidebarProvider(context, decorations, mcpServerPath);
 
   context.subscriptions.push(
     vscode.window.registerWebviewViewProvider("poirot.sidebar", provider)
@@ -17,20 +21,28 @@ export function activate(context: vscode.ExtensionContext): void {
     })
   );
 
-  const mcpServerPath = context.asAbsolutePath("dist/mcp-server.js");
   const storedSettings = context.workspaceState.get<string>("inlangSettingsPath");
+  reloadHandler = () => provider.reloadLocales();
 
-  spawnMcpServer(mcpServerPath, storedSettings, () => provider.reloadLocales());
-  writeCursorConfig(mcpServerPath, storedSettings);
+  spawnMcpServer(mcpServerPath, storedSettings, reloadHandler);
+
+  if (vscode.workspace.getConfiguration("poirot").get<boolean>("autoConfigureCursorMcp", true)) {
+    writeCursorConfig(mcpServerPath, storedSettings);
+  }
 
   provider.onConfigLoaded = (settingsPath) => {
-    writeCursorConfig(mcpServerPath, settingsPath);
+    restartMcpServer(mcpServerPath, settingsPath, reloadHandler!);
+    if (vscode.workspace.getConfiguration("poirot").get<boolean>("autoConfigureCursorMcp", true)) {
+      writeCursorConfig(mcpServerPath, settingsPath);
+    }
   };
 
   decorations.onEditKey = (key) => provider.openEditKey(key);
 
-  // Auto-load config immediately on activation so decorations work without opening the sidebar
   provider.tryAutoDiscover();
 }
 
-export function deactivate(): void {}
+export function deactivate(): void {
+  stopMcpServer();
+  reloadHandler = undefined;
+}

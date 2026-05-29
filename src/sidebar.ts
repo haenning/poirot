@@ -6,14 +6,15 @@ import {
   readInlangConfig,
   readAllLocales,
   getAllKeys,
-  addKey,
-  saveKeyEdits,
 } from "./inlang";
-import { generateUniqueKey } from "./keygen";
 import { DecorationManager } from "./decorations";
+import { detectAgents, installRules, needsUpdate, POIROT_VERSION } from "./rules-installer";
+import { formatKeyCall } from "./key-ref";
+import { callMcpTool } from "./mcp-spawn";
+import { scanKeysFromText } from "./scan-keys";
+import { isPathInsideRoots } from "./path-security";
+import { collectOrphanKeys } from "./i18n-read";
 
-
-const M_FUNC_RE = /\bm\.([a-z][a-z0-9_]*)\(\)/g;
 
 const SUPPORTED_EXTENSIONS = new Set([
   ".svelte", ".ts", ".tsx", ".js", ".jsx", ".vue", ".astro",
@@ -33,6 +34,7 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
   private _lastFileKeys: string[] = []; // sticky — only updated on supported file switch
   private _candidates: string[] = [];
   private _decorations: DecorationManager;
+  private _mcpServerPath?: string;
   onConfigLoaded?: (settingsPath: string) => void;
 
   // search-reindex state: track last phrase that triggered a reindex
@@ -40,9 +42,11 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
 
   constructor(
     private readonly _context: vscode.ExtensionContext,
-    decorations: DecorationManager
+    decorations: DecorationManager,
+    mcpServerPath?: string
   ) {
     this._decorations = decorations;
+    this._mcpServerPath = mcpServerPath;
   }
 
   resolveWebviewView(webviewView: vscode.WebviewView): void {
@@ -104,6 +108,10 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
   }
 
   private async _loadConfig(settingsPath: string): Promise<void> {
+    const roots = (vscode.workspace.workspaceFolders ?? []).map((f) => f.uri.fsPath);
+    if (!isPathInsideRoots(settingsPath, roots)) {
+      throw new Error("Settings path must be inside the current workspace");
+    }
     this._config = await readInlangConfig(settingsPath);
     this._localeMap = await readAllLocales(this._config);
     this._pendingEdits.clear();
@@ -145,12 +153,16 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
 
       case "saveKey": {
         const key = msg.key as string;
-        if (!this._config || !this._localeMap) break;
+        if (!this._config) break;
         const edits = this._pendingEdits.get(key);
         if (!edits) break;
-        await saveKeyEdits(this._config, this._localeMap, key, edits);
+        const entries = Object.entries(edits)
+          .filter(([, v]) => v.trim())
+          .map(([locale, value]) => ({ key, locale, value }));
+        if (entries.length > 0) {
+          await callMcpTool("set_translation_values", { entries }, this._config.settingsPath);
+        }
         this._pendingEdits.delete(key);
-        // re-read from disk so in-memory state matches exactly what was written
         await this.reloadLocales();
         break;
       }
@@ -158,11 +170,86 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
       case "findUsages": {
         const key = msg.key as string;
         vscode.commands.executeCommand("workbench.action.findInFiles", {
-          query: `m.${key}()`,
+          query: `m.${key}(`,
           triggerSearch: true,
           isRegex: false,
-          filesToInclude: "src",
         });
+        break;
+      }
+
+      case "orphanCount": {
+        if (!this._config || !this._localeMap) break;
+        const orphans = collectOrphanKeys(this._localeMap, this._config);
+        this._view?.webview.postMessage({
+          type: "orphanCount",
+          count: orphans.length,
+          keys: orphans,
+        });
+        break;
+      }
+
+      case "orphanProof": {
+        if (!this._config || !this._localeMap) break;
+        const orphans = collectOrphanKeys(this._localeMap, this._config);
+        if (orphans.length === 0) {
+          vscode.window.showInformationMessage("Poirot: No orphan keys.");
+          break;
+        }
+        vscode.commands.executeCommand("workbench.action.findInFiles", {
+          query: this._orphanSearchPattern(orphans),
+          triggerSearch: true,
+          isRegex: true,
+        });
+        break;
+      }
+
+      case "orphanPurge": {
+        if (!this._config || !this._localeMap) break;
+        const orphans = collectOrphanKeys(this._localeMap, this._config);
+        if (orphans.length === 0) {
+          vscode.window.showInformationMessage("Poirot: No orphan keys to purge.");
+          break;
+        }
+        const answer = await vscode.window.showWarningMessage(
+          `Delete ${orphans.length} orphan key(s) from all locale files?`,
+          { modal: true },
+          "Purge",
+          "Cancel"
+        );
+        if (answer !== "Purge") break;
+        await callMcpTool(
+          "delete_translation_keys",
+          { keys: orphans },
+          this._config.settingsPath
+        );
+        await this.reloadLocales();
+        vscode.window.showInformationMessage(`Poirot: Purged ${orphans.length} orphan key(s).`);
+        break;
+      }
+
+      case "installAgentRulesRequest": {
+        const projectDir = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
+        if (!projectDir || !this._mcpServerPath) break;
+        const answer = await vscode.window.showWarningMessage(
+          "Poirot will write to your agent rule files (CLAUDE.md, .cursor/rules/poirot.mdc, etc.). " +
+          "While we do our best not to touch anything outside the ##poirot## markers, " +
+          "please commit your current work first so you can quickly revert if needed.",
+          { modal: true },
+          "I've committed — go ahead",
+          "Cancel"
+        );
+        if (answer !== "I've committed — go ahead") break;
+        const result = installRules(
+          this._mcpServerPath,
+          this._config?.settingsPath,
+          projectDir
+        );
+        const lines = [
+          ...result.written.map((f) => `✓ ${path.basename(f)}`),
+          ...result.errors.map((e) => `✗ ${e}`),
+        ];
+        vscode.window.showInformationMessage(`Poirot: ${lines.join("  ")}`);
+        this._postState();
         break;
       }
 
@@ -202,26 +289,20 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
     });
     if (value === undefined) return;
 
-    const existing = new Set(getAllKeys(this._localeMap, baseLocale));
-    const suggested = generateUniqueKey(existing);
-    const key = await vscode.window.showInputBox({
-      value: suggested,
-      prompt: "Key name — confirm or edit",
-      validateInput: (v) => {
-        if (!v) return "Key cannot be empty";
-        if (!/^[a-z][a-z0-9_]*$/.test(v)) return "Use lowercase letters, digits, underscores only";
-        if (existing.has(v)) return "Key already exists";
-        return null;
-      },
-    });
-    if (!key) return;
-
-    await addKey(this._config, this._localeMap, key, value);
+    const result = await callMcpTool("create_translation_keys", { entries: [{ value }] }, this._config.settingsPath);
+    // Result text: "m.some_key()  [en] \"value\"" — extract the key name
+    const resultText = result.content[0]?.text ?? "";
+    const keyMatch = resultText.match(/^m\.([a-z][a-z0-9_]*)\(/);
+    if (!keyMatch) {
+      vscode.window.showErrorMessage(`Poirot: could not create key — ${resultText}`);
+      return;
+    }
+    const createdKey = keyMatch[1];
 
     const editor = vscode.window.activeTextEditor;
     if (editor) {
       await editor.edit((edit) => {
-        edit.insert(editor.selection.active, `m.${key}()`);
+        edit.insert(editor.selection.active, formatKeyCall(createdKey, value));
       });
     }
 
@@ -235,6 +316,15 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
     const keys = config ? getAllKeys(localeMap, config.baseLocale) : [];
     const currentFileKeys = this._getCurrentFileKeys();
 
+    const projectDir = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
+    let agentStatus: { installedIn: string[]; needsUpdate: boolean } = { installedIn: [], needsUpdate: false };
+    if (projectDir) {
+      try {
+        const ctx = detectAgents(projectDir);
+        agentStatus = { installedIn: ctx.installedIn, needsUpdate: needsUpdate(projectDir) };
+      } catch { /* ignore */ }
+    }
+
     this._view.webview.postMessage({
       type: "state",
       configPath: this._context.workspaceState.get<string>("inlangSettingsPath") ?? "",
@@ -242,20 +332,21 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
       locales: config?.locales ?? [],
       baseLocale: config?.baseLocale ?? "",
       keys,
+      orphanKeys: config && this._localeMap ? collectOrphanKeys(this._localeMap, config) : [],
       currentFileKeys,
       localeMap,
+      agentStatus,
+      poirotVersion: POIROT_VERSION,
     });
   }
 
+  private _orphanSearchPattern(keys: string[]): string {
+    if (keys.length === 1) return `m\\.${keys[0]}\\(`;
+    return `m\\.(${keys.join("|")})\\(`;
+  }
+
   private _scanFileKeys(editor: vscode.TextEditor): string[] {
-    const text = editor.document.getText();
-    const found = new Set<string>();
-    let m: RegExpExecArray | null;
-    M_FUNC_RE.lastIndex = 0;
-    while ((m = M_FUNC_RE.exec(text)) !== null) {
-      found.add(m[1]);
-    }
-    return [...found];
+    return scanKeysFromText(editor.document.getText());
   }
 
   private _getCurrentFileKeys(): string[] {
@@ -278,22 +369,33 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
 <meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'; script-src 'unsafe-inline';">
 <style>
   * { box-sizing: border-box; margin: 0; padding: 0; }
+  html, body { height: 100%; }
   body {
     font-family: var(--vscode-font-family);
     font-size: var(--vscode-font-size);
     color: var(--vscode-foreground);
     padding: 8px;
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
   }
-  h4 { font-size: 11px; text-transform: uppercase; opacity: 0.6; letter-spacing: 0.05em; }
+  .sidebar-main {
+    flex: 1 1 auto;
+    min-height: 0;
+    overflow-y: auto;
+    padding-bottom: 4px;
+  }
+  h4 { font-size: 9px; text-transform: uppercase; opacity: 0.5; letter-spacing: 0.07em; }
   input[type="text"] {
     width: 100%;
     background: var(--vscode-input-background);
     color: var(--vscode-input-foreground);
-    border: 1px solid var(--vscode-input-border, transparent);
+    border: 0.5px solid var(--vscode-input-border, rgba(128,128,128,0.2));
+    border-radius: 4px;
     padding: 4px 6px;
     outline: none;
-    font-size: inherit;
-    font-family: inherit;
+    font-size: 10px;
+    font-family: var(--vscode-editor-font-family, monospace);
   }
   input[type="text"]:focus { border-color: var(--vscode-focusBorder); }
   button {
@@ -321,9 +423,36 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
   }
   button.icon:hover { opacity: 1; background: var(--vscode-toolbar-hoverBackground, rgba(128,128,128,0.15)); }
   button.full { width: 100%; margin-bottom: 6px; }
+  button.new-key {
+    background: color-mix(in srgb, var(--vscode-button-background) 40%, transparent);
+    color: var(--vscode-button-foreground);
+    border: 0.5px solid var(--vscode-focusBorder, rgba(60,110,220,0.5));
+    border-radius: 4px;
+    font-family: var(--vscode-editor-font-family, monospace);
+    font-size: 13px;
+    letter-spacing: 0.03em;
+    padding: 7px 0;
+    cursor: pointer;
+    width: 100%;
+    margin-bottom: 6px;
+  }
+  button.new-key:hover { background: color-mix(in srgb, var(--vscode-button-hoverBackground) 50%, transparent); }
+  select {
+    background: var(--vscode-input-background);
+    color: var(--vscode-input-foreground);
+    border: 0.5px solid var(--vscode-input-border, rgba(128,128,128,0.2));
+    border-radius: 4px;
+    padding: 4px 4px;
+    font-size: 10px;
+    font-family: var(--vscode-editor-font-family, monospace);
+    outline: none;
+    cursor: pointer;
+    flex-shrink: 0;
+  }
+  select:focus { border-color: var(--vscode-focusBorder); }
 
   /* Config accordion */
-  details { margin-bottom: 10px; }
+  details { margin-bottom: 10px; border-bottom: 0.5px solid var(--vscode-panel-border, rgba(128,128,128,0.1)); padding-bottom: 6px; }
   summary {
     cursor: pointer;
     list-style: none;
@@ -366,28 +495,74 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
 
   .key-item {
     margin-bottom: 6px;
-    border-bottom: 1px solid var(--vscode-panel-border, rgba(128,128,128,0.2));
+    border-bottom: 0.5px solid var(--vscode-panel-border, rgba(128,128,128,0.1));
     padding-bottom: 6px;
   }
   .key-header { display: flex; align-items: center; gap: 4px; margin-bottom: 4px; }
-  .key-name { font-size: 11px; font-family: var(--vscode-editor-font-family, monospace); flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .key-name { font-size: 10px; font-family: var(--vscode-editor-font-family, monospace); flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .locale-row { display: flex; gap: 4px; align-items: baseline; margin-bottom: 3px; }
-  .locale-label { width: 24px; flex-shrink: 0; font-size: 10px; opacity: 0.6; font-weight: bold; }
-  .locale-val { flex: 1; font-size: 11px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; opacity: 0.9; }
-  .locale-val.empty { opacity: 0.35; font-style: italic; }
-  .locale-row input { flex: 1; font-size: 11px; }
+  .locale-label { width: 20px; flex-shrink: 0; font-size: 9px; opacity: 0.45; font-weight: bold; font-family: var(--vscode-editor-font-family, monospace); }
+  .locale-val { flex: 1; font-size: 10px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; opacity: 0.45; }
+  .locale-val.translated { opacity: 1; }
+  .locale-val.empty { opacity: 0.25; font-style: italic; }
+  .locale-val .var-pill { color: var(--vscode-symbolIcon-variableForeground, #4fc1ff); opacity: 1; }
+  .locale-row input { flex: 1; font-size: 10px; }
   .save-row { margin-top: 4px; display: flex; justify-content: flex-end; gap: 4px; }
-  .error { color: var(--vscode-errorForeground); font-size: 11px; margin-top: 4px; }
-  .empty-msg { opacity: 0.5; font-size: 11px; }
+  .error { color: var(--vscode-errorForeground); font-size: 10px; margin-top: 4px; }
+  .empty-msg { opacity: 0.5; font-size: 10px; }
+  .update-dot {
+    width: 7px; height: 7px; border-radius: 50%;
+    background: var(--vscode-notificationsInfoIcon-foreground, #3794ff);
+    display: inline-block; flex-shrink: 0; margin-left: 4px;
+  }
+  .keys-list-wrap { position: relative; }
+  .keys-list-wrap::after {
+    content: ''; position: sticky; bottom: 0; display: block;
+    height: 24px; margin-top: -24px;
+    background: linear-gradient(transparent, var(--vscode-sideBar-background, var(--vscode-editor-background, #1e1e1e)));
+    pointer-events: none;
+  }
+
+  /* Orphans section — pinned to sidebar bottom */
+  .orphans-section {
+    flex-shrink: 0;
+    padding-top: 10px;
+    margin: 0 -8px -8px;
+    padding-left: 8px;
+    padding-right: 8px;
+    padding-bottom: 8px;
+    border-top: 0.5px solid var(--vscode-panel-border, rgba(128,128,128,0.15));
+    background: var(--vscode-sideBar-background, var(--vscode-editor-background));
+  }
+  .orphans-section h4 { margin-bottom: 4px; }
+  .orphan-hint { font-size: 10px; opacity: 0.5; margin-bottom: 8px; line-height: 1.35; }
+  .orphan-count-display {
+    font-size: 11px;
+    font-family: var(--vscode-editor-font-family, monospace);
+    margin-bottom: 8px;
+    min-height: 14px;
+    opacity: 0.85;
+  }
+  .orphan-actions { display: flex; gap: 4px; }
+  .orphan-actions button { flex: 1; font-size: 10px; padding: 5px 4px; }
+  .orphan-actions button.danger {
+    background: var(--vscode-inputValidation-errorBackground, rgba(255,80,80,0.15));
+    color: var(--vscode-errorForeground);
+  }
+  .orphan-actions button.danger:hover {
+    background: color-mix(in srgb, var(--vscode-inputValidation-errorBackground, #5a1d1d) 80%, var(--vscode-button-hoverBackground));
+  }
 </style>
 </head>
 <body>
+
+<div class="sidebar-main">
 
 <details id="configDetails">
   <summary>
     <span class="chevron">▶</span>
     <h4 style="margin:0">Config</h4>
-    <span id="configSummaryPath" style="font-size:10px;opacity:0.45;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;flex:1;margin-left:4px;font-family:var(--vscode-editor-font-family,monospace)"></span>
+    <span id="configSummaryPath" style="font-size:9px;opacity:0.6;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;flex:1;margin-left:4px;font-family:var(--vscode-editor-font-family,monospace)"></span>
   </summary>
   <div class="config-body">
     <div id="candidateList" class="candidate-list"></div>
@@ -398,20 +573,42 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
     <div id="configError" class="error"></div>
   </div>
 </details>
+<button id="installRulesBtn" class="secondary" style="width:100%;font-size:10px;margin-bottom:8px;display:none;align-items:center;justify-content:center;gap:6px">
+  <span class="update-dot"></span>Update agent rules
+</button>
 
 <section id="s-keys">
   <div class="keys-top">
     <h4>Keys</h4>
   </div>
-  <button id="newKeyBtn" class="full" title="New Translation Key (⌘⇧T)">+ New Key</button>
-  <input id="searchInput" type="text" placeholder="Search all keys…" style="margin-bottom:8px" />
-  <div id="keysList"></div>
+  <button id="newKeyBtn" class="new-key" title="New Translation Key (⌘⇧T)">+ New Key</button>
+  <div class="search-row" style="display:flex;gap:4px;margin-bottom:8px">
+    <input id="searchInput" type="text" placeholder="Search keys…" style="flex:1;min-width:0" />
+    <select id="searchLocale" title="Search in locale">
+      <option value="__all__">all</option>
+    </select>
+  </div>
+  <div class="keys-list-wrap"><div id="keysList"></div></div>
+</section>
+
+</div>
+
+<section id="s-orphans" class="orphans-section">
+  <h4>Orphan keys</h4>
+  <p class="orphan-hint">In locale files but not in the base locale.</p>
+  <div id="orphanCountDisplay" class="orphan-count-display"></div>
+  <div class="orphan-actions">
+    <button id="orphanCountBtn" class="secondary" title="Count orphan keys">Count</button>
+    <button id="orphanProofBtn" class="secondary" title="Search project for m.key() usages">Proof</button>
+    <button id="orphanPurgeBtn" class="secondary danger" title="Delete all orphan keys">Purge</button>
+  </div>
 </section>
 
 <script>
   const vscode = acquireVsCodeApi();
-  let state = { configPath: '', candidates: [], locales: [], baseLocale: '', keys: [], currentFileKeys: [], localeMap: {} };
+  let state = { configPath: '', candidates: [], locales: [], baseLocale: '', keys: [], orphanKeys: [], currentFileKeys: [], localeMap: {}, agentStatus: { installedIn: [], needsUpdate: false }, poirotVersion: '1' };
   let searchQuery = '';
+  let searchLocale = '__all__';
   let searchTimer = null;
   const editingKeys = new Set();
   const reindexedQueries = new Set();
@@ -432,13 +629,34 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
     clearTimeout(searchTimer);
     searchTimer = setTimeout(() => renderKeys(), 150);
   });
+  document.getElementById('searchLocale').addEventListener('change', (e) => {
+    searchLocale = e.target.value;
+    renderKeys();
+  });
+  document.getElementById('installRulesBtn').addEventListener('click', () => {
+    vscode.postMessage({ type: 'installAgentRulesRequest' });
+  });
+  document.getElementById('orphanCountBtn').addEventListener('click', () => {
+    vscode.postMessage({ type: 'orphanCount' });
+  });
+  document.getElementById('orphanProofBtn').addEventListener('click', () => {
+    vscode.postMessage({ type: 'orphanProof' });
+  });
+  document.getElementById('orphanPurgeBtn').addEventListener('click', () => {
+    vscode.postMessage({ type: 'orphanPurge' });
+  });
 
   window.addEventListener('message', (e) => {
     const msg = e.data;
     if (msg.type === 'state') {
       state = msg;
       renderConfig();
+      renderAgentRules();
+      renderLocaleDropdown();
       renderKeys();
+      renderOrphanCount(state.orphanKeys || []);
+    } else if (msg.type === 'orphanCount') {
+      renderOrphanCount(msg.keys || [], msg.count);
     } else if (msg.type === 'error') {
       document.getElementById('configError').textContent = msg.message;
     } else if (msg.type === 'openEditKey') {
@@ -488,20 +706,60 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
     });
   }
 
+  function renderAgentRules() {
+    const { agentStatus } = state;
+    const btn = document.getElementById('installRulesBtn');
+    if (!agentStatus) return;
+    const show = agentStatus.needsUpdate;
+    btn.style.display = show ? 'flex' : 'none';
+  }
+
+  function renderLocaleDropdown() {
+    const sel = document.getElementById('searchLocale');
+    const { locales } = state;
+    // preserve current selection if still valid
+    const prev = searchLocale;
+    sel.innerHTML = '<option value="__all__">all</option>' +
+      locales.map(l => \`<option value="\${escHtml(l)}">\${escHtml(l)}</option>\`).join('');
+    if (locales.includes(prev)) {
+      sel.value = prev;
+    } else {
+      searchLocale = '__all__';
+      sel.value = '__all__';
+    }
+  }
+
   function displayLocales(baseLocale, allLocales) {
     const others = allLocales.filter(l => l !== baseLocale).sort().slice(0, 2);
     return [baseLocale, ...others];
   }
 
   function getVisibleKeys() {
-    const { currentFileKeys, localeMap, baseLocale } = state;
+    const { currentFileKeys, localeMap, baseLocale, locales } = state;
     const q = searchQuery.trim().toLowerCase();
     if (!q) return currentFileKeys;
     const allKeys = Object.keys(localeMap[baseLocale] || {}).filter(k => k !== '$schema');
-    return allKeys.filter(k =>
-      k.toLowerCase().includes(q) ||
-      String((localeMap[baseLocale] || {})[k] ?? '').toLowerCase().includes(q)
-    );
+    const searchIn = searchLocale === '__all__' ? locales : [searchLocale];
+    return allKeys.filter(k => {
+      if (k.toLowerCase().includes(q)) return true;
+      return searchIn.some(l => String((localeMap[l] || {})[k] ?? '').toLowerCase().includes(q));
+    });
+  }
+
+  function renderOrphanCount(keys, countOverride) {
+    const el = document.getElementById('orphanCountDisplay');
+    const n = countOverride !== undefined ? countOverride : keys.length;
+    if (!state.configPath) {
+      el.textContent = '';
+      return;
+    }
+    if (n === 0) {
+      el.textContent = '0 orphan keys';
+      return;
+    }
+    const preview = keys.slice(0, 8).join(', ');
+    const more = n > 8 ? \` … +\${n - 8} more\` : '';
+    el.textContent = \`\${n} orphan key\${n === 1 ? '' : 's'}: \${preview}\${more}\`;
   }
 
   function renderKeys() {
@@ -538,9 +796,10 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
           </div>\`;
         }
         const isEmpty = !val;
+        const valClass = isEmpty ? 'empty' : 'translated';
         return \`<div class="locale-row">
           <span class="locale-label">\${escHtml(locale)}</span>
-          <span class="locale-val\${isEmpty ? ' empty' : ''}">\${isEmpty ? 'empty' : escHtml(val)}</span>
+          <span class="locale-val \${valClass}">\${isEmpty ? 'empty' : highlightVars(val)}</span>
         </div>\`;
       }).join('');
 
@@ -588,6 +847,10 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
 
   function escHtml(s) {
     return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+  }
+
+  function highlightVars(s) {
+    return escHtml(s).replace(/\{([^}]+)\}/g, '<span class="var-pill">{$1}</span>');
   }
 
   vscode.postMessage({ type: 'ready' });

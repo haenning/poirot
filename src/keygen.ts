@@ -15,5 +15,8 @@ export function generateUniqueKey(existingKeys: Set<string>): string {
     key = generateKey();
     attempts++;
   }
+  if (existingKeys.has(key)) {
+    throw new Error("Could not generate a unique key after 20 attempts");
+  }
   return key;
 }

@@ -1,6 +1,7 @@
 import fs from "fs";
 import path from "path";
 import { atomicWriteJson } from "./atomic";
+import { assertPathContained, validateLocaleCode, validatePathPattern } from "./path-security";
 
 export interface InlangConfig {
   settingsPath: string;
@@ -8,9 +9,23 @@ export interface InlangConfig {
   locales: string[];
   pathPattern: string;
   projectDir: string;
+  paraglideOutdir: string | null;
 }
 
 export type LocaleMap = Record<string, Record<string, string>>;
+
+function readParaglideOutdir(projectDir: string): string | null {
+  const candidates = ["vite.config.ts", "vite.config.js", "vite.config.mts", "vite.config.mjs"];
+  for (const name of candidates) {
+    try {
+      const src = fs.readFileSync(path.join(projectDir, name), "utf8");
+      // Match outdir inside a paraglide plugin call, e.g. paraglide({ outdir: './src/lib/paraglide' })
+      const m = src.match(/paraglide[^)]*\boutdir\s*:\s*['"]([^'"]+)['"]/s);
+      if (m) return m[1];
+    } catch { /* file not found */ }
+  }
+  return null;
+}
 
 export async function readInlangConfig(settingsPath: string): Promise<InlangConfig> {
   const raw = await fs.promises.readFile(settingsPath, "utf8");
@@ -43,12 +58,17 @@ export async function readInlangConfig(settingsPath: string): Promise<InlangConf
 
   // projectDir is two levels up from settings.json (above project.inlang/)
   const projectDir = path.dirname(path.dirname(settingsPath));
+  validatePathPattern(pathPattern);
+  const paraglideOutdir = readParaglideOutdir(projectDir);
 
-  return { settingsPath, baseLocale, locales, pathPattern, projectDir };
+  return { settingsPath, baseLocale, locales, pathPattern, projectDir, paraglideOutdir };
 }
 
 export function resolveLocalePath(config: InlangConfig, locale: string): string {
-  return path.resolve(config.projectDir, config.pathPattern.replace("{locale}", locale));
+  validateLocaleCode(locale);
+  const filePath = path.resolve(config.projectDir, config.pathPattern.replace("{locale}", locale));
+  assertPathContained(config.projectDir, filePath);
+  return filePath;
 }
 
 export async function readAllLocales(config: InlangConfig): Promise<LocaleMap> {
@@ -98,6 +118,58 @@ export async function addKey(
   );
 }
 
+export async function setLocaleValue(
+  config: InlangConfig,
+  localeMap: LocaleMap,
+  key: string,
+  locale: string,
+  value: string
+): Promise<void> {
+  if (!value.trim()) throw new Error("Value must not be empty");
+  if (!config.locales.includes(locale)) throw new Error(`Unknown locale: ${locale}`);
+  const data = { ...(localeMap[locale] ?? {}) };
+  data[key] = value;
+  localeMap[locale] = data;
+  await writeLocaleFile(config, locale, data);
+}
+
+export async function renameKey(
+  config: InlangConfig,
+  localeMap: LocaleMap,
+  oldKey: string,
+  newKey: string
+): Promise<void> {
+  await Promise.all(
+    config.locales.map((locale) => {
+      const data = { ...(localeMap[locale] ?? {}) };
+      if (!(oldKey in data)) return Promise.resolve();
+      data[newKey] = data[oldKey];
+      delete data[oldKey];
+      localeMap[locale] = data;
+      return writeLocaleFile(config, locale, data);
+    })
+  );
+}
+
+export async function deleteKey(
+  config: InlangConfig,
+  localeMap: LocaleMap,
+  key: string
+): Promise<boolean> {
+  let found = false;
+  await Promise.all(
+    config.locales.map((locale) => {
+      const data = { ...(localeMap[locale] ?? {}) };
+      if (!(key in data)) return Promise.resolve();
+      found = true;
+      delete data[key];
+      localeMap[locale] = data;
+      return writeLocaleFile(config, locale, data);
+    })
+  );
+  return found;
+}
+
 export async function saveKeyEdits(
   config: InlangConfig,
   localeMap: LocaleMap,
@@ -106,6 +178,7 @@ export async function saveKeyEdits(
 ): Promise<void> {
   await Promise.all(
     Object.entries(edits).map(([locale, value]) => {
+      if (!value.trim()) return Promise.resolve(); // never write empty/whitespace-only strings
       const data = { ...(localeMap[locale] ?? {}) };
       data[key] = value;
       localeMap[locale] = data;
