@@ -4,8 +4,9 @@ import { DecorationManager } from "./decorations";
 import { spawnMcpServer, writeCursorConfig } from "./mcp-spawn";
 
 export function activate(context: vscode.ExtensionContext): void {
+  const mcpServerPath = context.asAbsolutePath("dist/mcp-server.js");
   const decorations = new DecorationManager(context);
-  const provider = new SidebarProvider(context, decorations);
+  const provider = new SidebarProvider(context, decorations, mcpServerPath);
 
   context.subscriptions.push(
     vscode.window.registerWebviewViewProvider("poirot.sidebar", provider)
@@ -16,8 +17,6 @@ export function activate(context: vscode.ExtensionContext): void {
       provider.handleNewKeyCommand();
     })
   );
-
-  const mcpServerPath = context.asAbsolutePath("dist/mcp-server.js");
   const storedSettings = context.workspaceState.get<string>("inlangSettingsPath");
 
   spawnMcpServer(mcpServerPath, storedSettings, () => provider.reloadLocales());

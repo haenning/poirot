@@ -6,11 +6,10 @@ import {
   readInlangConfig,
   readAllLocales,
   getAllKeys,
-  addKey,
-  saveKeyEdits,
 } from "./inlang";
-import { generateUniqueKey } from "./keygen";
 import { DecorationManager } from "./decorations";
+import { detectAgents, installRules, needsUpdate, POIROT_VERSION } from "./rules-installer";
+import { callMcpTool } from "./mcp-spawn";
 
 
 const M_FUNC_RE = /\bm\.([a-z][a-z0-9_]*)\(\)/g;
@@ -33,6 +32,7 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
   private _lastFileKeys: string[] = []; // sticky — only updated on supported file switch
   private _candidates: string[] = [];
   private _decorations: DecorationManager;
+  private _mcpServerPath?: string;
   onConfigLoaded?: (settingsPath: string) => void;
 
   // search-reindex state: track last phrase that triggered a reindex
@@ -40,9 +40,11 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
 
   constructor(
     private readonly _context: vscode.ExtensionContext,
-    decorations: DecorationManager
+    decorations: DecorationManager,
+    mcpServerPath?: string
   ) {
     this._decorations = decorations;
+    this._mcpServerPath = mcpServerPath;
   }
 
   resolveWebviewView(webviewView: vscode.WebviewView): void {
@@ -145,12 +147,16 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
 
       case "saveKey": {
         const key = msg.key as string;
-        if (!this._config || !this._localeMap) break;
+        if (!this._config) break;
         const edits = this._pendingEdits.get(key);
         if (!edits) break;
-        await saveKeyEdits(this._config, this._localeMap, key, edits);
+        const entries = Object.entries(edits)
+          .filter(([, v]) => v.trim())
+          .map(([locale, value]) => ({ key, locale, value }));
+        if (entries.length > 0) {
+          await callMcpTool("set_translation_values", { entries }, this._config.settingsPath);
+        }
         this._pendingEdits.delete(key);
-        // re-read from disk so in-memory state matches exactly what was written
         await this.reloadLocales();
         break;
       }
@@ -163,6 +169,32 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
           isRegex: false,
           filesToInclude: "src",
         });
+        break;
+      }
+
+      case "installAgentRulesRequest": {
+        const projectDir = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
+        if (!projectDir || !this._mcpServerPath) break;
+        const answer = await vscode.window.showWarningMessage(
+          "Poirot will write to your agent rule files (CLAUDE.md, .cursor/rules/poirot.mdc, etc.). " +
+          "While we do our best not to touch anything outside the ##poirot## markers, " +
+          "please commit your current work first so you can quickly revert if needed.",
+          { modal: true },
+          "I've committed — go ahead",
+          "Cancel"
+        );
+        if (answer !== "I've committed — go ahead") break;
+        const result = installRules(
+          this._mcpServerPath,
+          this._config?.settingsPath,
+          projectDir
+        );
+        const lines = [
+          ...result.written.map((f) => `✓ ${path.basename(f)}`),
+          ...result.errors.map((e) => `✗ ${e}`),
+        ];
+        vscode.window.showInformationMessage(`Poirot: ${lines.join("  ")}`);
+        this._postState();
         break;
       }
 
@@ -202,26 +234,20 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
     });
     if (value === undefined) return;
 
-    const existing = new Set(getAllKeys(this._localeMap, baseLocale));
-    const suggested = generateUniqueKey(existing);
-    const key = await vscode.window.showInputBox({
-      value: suggested,
-      prompt: "Key name — confirm or edit",
-      validateInput: (v) => {
-        if (!v) return "Key cannot be empty";
-        if (!/^[a-z][a-z0-9_]*$/.test(v)) return "Use lowercase letters, digits, underscores only";
-        if (existing.has(v)) return "Key already exists";
-        return null;
-      },
-    });
-    if (!key) return;
-
-    await addKey(this._config, this._localeMap, key, value);
+    const result = await callMcpTool("create_translation_keys", { entries: [{ value }] }, this._config.settingsPath);
+    // Result text: "m.some_key()  [en] \"value\"" — extract the key name
+    const resultText = result.content[0]?.text ?? "";
+    const keyMatch = resultText.match(/^m\.([a-z][a-z0-9_]*)\(\)/);
+    if (!keyMatch) {
+      vscode.window.showErrorMessage(`Poirot: could not create key — ${resultText}`);
+      return;
+    }
+    const createdKey = keyMatch[1];
 
     const editor = vscode.window.activeTextEditor;
     if (editor) {
       await editor.edit((edit) => {
-        edit.insert(editor.selection.active, `m.${key}()`);
+        edit.insert(editor.selection.active, `m.${createdKey}()`);
       });
     }
 
@@ -235,6 +261,15 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
     const keys = config ? getAllKeys(localeMap, config.baseLocale) : [];
     const currentFileKeys = this._getCurrentFileKeys();
 
+    const projectDir = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
+    let agentStatus: { installedIn: string[]; needsUpdate: boolean } = { installedIn: [], needsUpdate: false };
+    if (projectDir) {
+      try {
+        const ctx = detectAgents(projectDir);
+        agentStatus = { installedIn: ctx.installedIn, needsUpdate: needsUpdate(projectDir) };
+      } catch { /* ignore */ }
+    }
+
     this._view.webview.postMessage({
       type: "state",
       configPath: this._context.workspaceState.get<string>("inlangSettingsPath") ?? "",
@@ -244,6 +279,8 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
       keys,
       currentFileKeys,
       localeMap,
+      agentStatus,
+      poirotVersion: POIROT_VERSION,
     });
   }
 
@@ -408,6 +445,11 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
   .save-row { margin-top: 4px; display: flex; justify-content: flex-end; gap: 4px; }
   .error { color: var(--vscode-errorForeground); font-size: 10px; margin-top: 4px; }
   .empty-msg { opacity: 0.5; font-size: 10px; }
+  .update-dot {
+    width: 7px; height: 7px; border-radius: 50%;
+    background: var(--vscode-notificationsInfoIcon-foreground, #3794ff);
+    display: inline-block; flex-shrink: 0; margin-left: 4px;
+  }
   .keys-list-wrap { position: relative; }
   .keys-list-wrap::after {
     content: ''; position: sticky; bottom: 0; display: block;
@@ -434,6 +476,9 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
     <div id="configError" class="error"></div>
   </div>
 </details>
+<button id="installRulesBtn" class="secondary" style="width:100%;font-size:10px;margin-bottom:8px;display:none;align-items:center;justify-content:center;gap:6px">
+  <span class="update-dot"></span>Update agent rules
+</button>
 
 <section id="s-keys">
   <div class="keys-top">
@@ -451,7 +496,7 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
 
 <script>
   const vscode = acquireVsCodeApi();
-  let state = { configPath: '', candidates: [], locales: [], baseLocale: '', keys: [], currentFileKeys: [], localeMap: {} };
+  let state = { configPath: '', candidates: [], locales: [], baseLocale: '', keys: [], currentFileKeys: [], localeMap: {}, agentStatus: { installedIn: [], needsUpdate: false }, poirotVersion: '1' };
   let searchQuery = '';
   let searchLocale = '__all__';
   let searchTimer = null;
@@ -478,12 +523,16 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
     searchLocale = e.target.value;
     renderKeys();
   });
+  document.getElementById('installRulesBtn').addEventListener('click', () => {
+    vscode.postMessage({ type: 'installAgentRulesRequest' });
+  });
 
   window.addEventListener('message', (e) => {
     const msg = e.data;
     if (msg.type === 'state') {
       state = msg;
       renderConfig();
+      renderAgentRules();
       renderLocaleDropdown();
       renderKeys();
     } else if (msg.type === 'error') {
@@ -533,6 +582,14 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
         if (radio.checked) vscode.postMessage({ type: 'setConfigPath', path: radio.value });
       });
     });
+  }
+
+  function renderAgentRules() {
+    const { agentStatus } = state;
+    const btn = document.getElementById('installRulesBtn');
+    if (!agentStatus) return;
+    const show = agentStatus.needsUpdate;
+    btn.style.display = show ? 'flex' : 'none';
   }
 
   function renderLocaleDropdown() {

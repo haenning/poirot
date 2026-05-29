@@ -8,9 +8,23 @@ export interface InlangConfig {
   locales: string[];
   pathPattern: string;
   projectDir: string;
+  paraglideOutdir: string | null;
 }
 
 export type LocaleMap = Record<string, Record<string, string>>;
+
+function readParaglideOutdir(projectDir: string): string | null {
+  const candidates = ["vite.config.ts", "vite.config.js", "vite.config.mts", "vite.config.mjs"];
+  for (const name of candidates) {
+    try {
+      const src = fs.readFileSync(path.join(projectDir, name), "utf8");
+      // Match outdir inside a paraglide plugin call, e.g. paraglide({ outdir: './src/lib/paraglide' })
+      const m = src.match(/paraglide[^)]*\boutdir\s*:\s*['"]([^'"]+)['"]/s);
+      if (m) return m[1];
+    } catch { /* file not found */ }
+  }
+  return null;
+}
 
 export async function readInlangConfig(settingsPath: string): Promise<InlangConfig> {
   const raw = await fs.promises.readFile(settingsPath, "utf8");
@@ -43,8 +57,9 @@ export async function readInlangConfig(settingsPath: string): Promise<InlangConf
 
   // projectDir is two levels up from settings.json (above project.inlang/)
   const projectDir = path.dirname(path.dirname(settingsPath));
+  const paraglideOutdir = readParaglideOutdir(projectDir);
 
-  return { settingsPath, baseLocale, locales, pathPattern, projectDir };
+  return { settingsPath, baseLocale, locales, pathPattern, projectDir, paraglideOutdir };
 }
 
 export function resolveLocalePath(config: InlangConfig, locale: string): string {
