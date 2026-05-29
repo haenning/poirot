@@ -86,7 +86,7 @@
     "unique-names-generator": "^4.7.1"
   },
   "devDependencies": {
-    "@types/node": "^20.19.0",
+    "@types/node": "^25.9.1",
     "@types/proper-lockfile": "^4.1.4",
     "@types/vscode": "^1.120.0",
     "@vscode/test-electron": "^2.4.1",
@@ -94,8 +94,8 @@
     "esbuild": "^0.28.0",
     "mocha": "^11.7.6",
     "tsx": "^4.22.3",
-    "typescript": "^5.9.0",
-    "vitest": "^3.2.0"
+    "typescript": "^6.0.3",
+    "vitest": "^4.1.7"
   },
   "overrides": {
     "diff": "^8.0.3",
