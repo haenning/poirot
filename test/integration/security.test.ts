@@ -3,7 +3,8 @@ import fs from "fs";
 import path from "path";
 import os from "os";
 import { readInlangConfig, resolveLocalePath } from "../../src/inlang";
-import { handleTool, resetMutexesForTests } from "../../src/mcp-tools";
+import { handleTool } from "../../src/mcp-tools";
+import { resetWriteCoordinatorForTests } from "../../src/write-coordinator";
 
 describe("security regression", () => {
   let tempDir = "";
@@ -38,7 +39,7 @@ describe("security regression", () => {
   });
 
   it("handleTool fails for invalid path pattern in settings", async () => {
-    resetMutexesForTests();
+    resetWriteCoordinatorForTests();
     tempDir = await fs.promises.mkdtemp(path.join(os.tmpdir(), "poirot-sec2-"));
     const inlangDir = path.join(tempDir, "project.inlang");
     await fs.promises.mkdir(inlangDir, { recursive: true });

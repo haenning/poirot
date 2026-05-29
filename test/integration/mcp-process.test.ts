@@ -3,7 +3,8 @@ import { spawn, type ChildProcessWithoutNullStreams } from "child_process";
 import fs from "fs";
 import path from "path";
 import { copyFixtureToTemp, settingsPathIn } from "../helpers";
-import { handleTool, resetMutexesForTests } from "../../src/mcp-tools";
+import { handleTool } from "../../src/mcp-tools";
+import { resetWriteCoordinatorForTests } from "../../src/write-coordinator";
 
 describe("concurrency integration", () => {
   let projectRoot = "";
@@ -14,7 +15,7 @@ describe("concurrency integration", () => {
   });
 
   it("handles parallel set_translation_values without corrupt JSON", async () => {
-    resetMutexesForTests();
+    resetWriteCoordinatorForTests();
     projectRoot = await copyFixtureToTemp("minimal-inlang");
     settingsPath = settingsPathIn(projectRoot);
 

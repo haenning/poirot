@@ -1,6 +1,8 @@
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import fs from "fs";
-import { handleTool, resetMutexesForTests } from "./mcp-tools";
+import path from "path";
+import { handleTool } from "./mcp-tools";
+import { resetWriteCoordinatorForTests } from "./write-coordinator";
 import { copyFixtureToTemp, settingsPathIn } from "../test/helpers";
 
 describe("mcp-tools", () => {
@@ -8,7 +10,7 @@ describe("mcp-tools", () => {
   let settingsPath = "";
 
   beforeEach(async () => {
-    resetMutexesForTests();
+    resetWriteCoordinatorForTests();
     projectRoot = await copyFixtureToTemp("minimal-inlang");
     settingsPath = settingsPathIn(projectRoot);
   });
@@ -63,5 +65,20 @@ describe("mcp-tools", () => {
 
   it("rejects unknown tools", async () => {
     await expect(handleTool("unknown_tool", {}, settingsPath)).rejects.toThrow(/Unknown tool/);
+  });
+
+  it("bulk_lookup_translations searches keys without writing", async () => {
+    const before = await fs.promises.readFile(`${projectRoot}/messages/en.json`, "utf8");
+    const result = await handleTool(
+      "bulk_lookup_translations",
+      { queries: ["Hello", "missing_xyz"], locales: ["en", "de"] },
+      settingsPath
+    );
+    const after = await fs.promises.readFile(`${projectRoot}/messages/en.json`, "utf8");
+    expect(after).toBe(before);
+    expect(result.content[0].text).toContain('Query "Hello"');
+    expect(result.content[0].text).toContain("m.hello_world()");
+    expect(result.content[0].text).toContain('Query "missing_xyz"');
+    expect(result.content[0].text).toContain("(no matches)");
   });
 });

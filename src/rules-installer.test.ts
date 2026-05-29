@@ -43,4 +43,15 @@ describe("rules-installer", () => {
     fs.mkdirSync(path.join(projectDir, ".cursor"), { recursive: true });
     expect(needsUpdate(projectDir)).toBe(true);
   });
+
+  it("needsUpdate when agent rules block version is outdated", () => {
+    fs.mkdirSync(path.join(projectDir, ".cursor", "rules"), { recursive: true });
+    const mdc = path.join(projectDir, ".cursor", "rules", "poirot.mdc");
+    fs.writeFileSync(
+      mdc,
+      `<!-- Poirot v4 — do not edit between markers -->\n##poirot##\nold\n##poirot##\n`,
+      "utf8"
+    );
+    expect(needsUpdate(projectDir)).toBe(true);
+  });
 });

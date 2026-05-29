@@ -35,7 +35,7 @@ The script builds the extension and installs it into Cursor or VS Code automatic
 ```bash
 npm install
 npm run package
-code --install-extension poirot-0.0.1.vsix
+code --install-extension poirot-0.1.0.vsix
 ```
 
 ## Usage
@@ -59,10 +59,11 @@ Open the Poirot panel from the activity bar (speech bubble icon).
 
 ### MCP (Cursor / Claude Code)
 
-When `poirot.autoConfigureCursorMcp` is enabled (default), Poirot writes a `poirot` entry to `~/.cursor/mcp.json` on activation. Five tools are exposed to any MCP-compatible agent:
+When `poirot.autoConfigureCursorMcp` is enabled (default), Poirot writes a `poirot` entry to `~/.cursor/mcp.json` on activation. Six tools are exposed to any MCP-compatible agent:
 
 | Tool | When to use |
 | ---- | ----------- |
+| `bulk_lookup_translations` | Search existing keys by name or value — up to 5 matches per query; optional `locales` to limit languages |
 | `create_translation_keys` | Create one or many keys — always prefer this over hardcoding strings |
 | `set_translation_values` | Set or fix translations for specific key/locale pairs |
 | `rename_translation_keys` | Rename keys to new auto-generated names |
@@ -79,6 +80,26 @@ create_translation_keys(entries: [
 ```
 
 The agent receives the generated key references and inserts them directly into code. After all keys are created, it can call `auto_translate` to fill in secondary locales via the paraglide machine-translate script.
+
+**Lookup before create** — agent rules (v6) instruct models to call `bulk_lookup_translations` first so existing keys are reused instead of duplicated:
+
+```text
+bulk_lookup_translations(queries: ["submit", "cancel"], locales: ["en", "de"])
+→ Query "submit" (searched: en, de, max 5):
+    1. m.submit_form()  [en] "Submit form"  [de] "Formular absenden"
+→ Query "cancel" (searched: en, de, max 5):
+    1. m.cancel_action()  [en] "Cancel"  [de] "Abbrechen"
+```
+
+## Changelog
+
+### 0.1.0
+
+- **`bulk_lookup_translations` MCP tool** — search keys by name or value; up to 5 matches per query; optional locale filter
+- **Agent rules v6** — numbered workflow: lookup → create → translate → check
+- **Cross-process write lock** — safe concurrent MCP writes via `{projectDir}/.poirot/write.lock`
+- **Security hardening** — path jail, Node IPC (no Unix socket), `execFileSync`, MCP restart on config change
+- **Test suite** — unit, integration, and E2E tests with CI
 
 ## Testing
 

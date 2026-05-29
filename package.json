@@ -2,7 +2,7 @@
   "name": "poirot",
   "displayName": "Poirot",
   "description": "Manage paraglide-js/inlang i18n translation keys from the sidebar",
-  "version": "0.0.1",
+  "version": "0.1.0",
   "engines": {
     "vscode": "^1.85.0"
   },
@@ -77,19 +77,23 @@
     "test:watch": "vitest",
     "test:integration": "npm run compile && vitest run --config vitest.integration.config.ts",
     "test:e2e": "npm run compile && node test/e2e/runTests.js",
-    "test:all": "npm test && npm run test:integration && npm run test:e2e"
+    "test:all": "npm test && npm run test:integration && npm run test:e2e",
+    "test:bench": "tsx test/benchmark/run-load.ts"
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.29.0",
+    "proper-lockfile": "^4.1.2",
     "unique-names-generator": "^4.7.1"
   },
   "devDependencies": {
     "@types/node": "^20.19.0",
+    "@types/proper-lockfile": "^4.1.4",
     "@types/vscode": "^1.120.0",
     "@vscode/test-electron": "^2.4.1",
     "@vscode/vsce": "^3.9.0",
     "esbuild": "^0.28.0",
     "mocha": "^11.7.6",
+    "tsx": "^4.22.3",
     "typescript": "^5.9.0",
     "vitest": "^3.2.0"
   }

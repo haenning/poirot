@@ -2,11 +2,16 @@
 
 Poirot uses a three-tier test strategy so regressions are caught at the right level of the stack.
 
+## Write path
+
+All locale mutations go through [`withProjectWrite`](src/write-coordinator.ts) (process mutex + cross-process file lock). See [docs/write-path.md](docs/write-path.md).
+
 ## Quick start
 
 ```bash
 npm install
 npm run test:all
+npm run test:bench   # cross-process load: mutex-only vs file lock timing report
 ```
 
 ## Tiers

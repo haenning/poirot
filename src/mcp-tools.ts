@@ -1,37 +1,15 @@
 import { execFileSync } from "child_process";
 import { readInlangConfig, readAllLocales, getAllKeys, addKey, setLocaleValue, renameKey } from "./inlang";
 import { generateUniqueKey } from "./keygen";
+import { withProjectWrite } from "./write-coordinator";
+import {
+  bulkLookupTranslations,
+  formatBulkLookupResults,
+  getSearchLocales,
+} from "./lookup";
 
 export interface ToolResult {
   content: Array<{ type: "text"; text: string }>;
-}
-
-export class AsyncMutex {
-  private _chain = Promise.resolve();
-
-  acquire<T>(fn: () => Promise<T>): Promise<T> {
-    const next = this._chain.then(fn);
-    this._chain = next.then(
-      () => {},
-      () => {}
-    );
-    return next;
-  }
-}
-
-const _mutexes = new Map<string, AsyncMutex>();
-
-export function getMutex(settingsPath: string): AsyncMutex {
-  let m = _mutexes.get(settingsPath);
-  if (!m) {
-    m = new AsyncMutex();
-    _mutexes.set(settingsPath, m);
-  }
-  return m;
-}
-
-export function resetMutexesForTests(): void {
-  _mutexes.clear();
 }
 
 function execCommand(
@@ -53,12 +31,34 @@ function onReload(): void {
   process.stderr.write("POIROT_RELOAD\n");
 }
 
+const READ_ONLY_TOOLS = new Set(["bulk_lookup_translations"]);
+
 export async function handleTool(
   name: string,
   args: unknown,
   settingsPath: string
 ): Promise<ToolResult> {
-  return getMutex(settingsPath).acquire(async () => {
+  if (READ_ONLY_TOOLS.has(name)) {
+    return executeTool(name, args, settingsPath);
+  }
+  return withProjectWrite(settingsPath, () => executeTool(name, args, settingsPath));
+}
+
+async function executeTool(
+  name: string,
+  args: unknown,
+  settingsPath: string
+): Promise<ToolResult> {
+    if (name === "bulk_lookup_translations") {
+      const { queries, locales } = args as { queries: string[]; locales?: string[] };
+      const config = await readInlangConfig(settingsPath);
+      const localeMap = await readAllLocales(config);
+      const searchLocales = getSearchLocales(config, locales);
+      const results = bulkLookupTranslations(localeMap, config, queries, { locales });
+      const text = formatBulkLookupResults(results, searchLocales);
+      return { content: [{ type: "text" as const, text }] };
+    }
+
     if (name === "create_translation_keys") {
       const { entries } = args as { entries: Array<{ value: string }> };
       const config = await readInlangConfig(settingsPath);
@@ -190,10 +190,32 @@ export async function handleTool(
     }
 
     throw new Error(`Unknown tool: ${name}`);
-  });
 }
 
 export const MCP_TOOL_DEFINITIONS = [
+  {
+    name: "bulk_lookup_translations",
+    description:
+      "Search existing translation keys by key name or translated value. " +
+      "Pass one or many search strings; each returns up to 5 matches with m.key() references and locale values. " +
+      "Omit locales to search all languages, or pass specific locale codes (e.g. [\"en\", \"de\"]) to match only in those languages. " +
+      "Use before creating keys to reuse existing translations.",
+    inputSchema: {
+      type: "object" as const,
+      properties: {
+        queries: {
+          type: "array",
+          minItems: 1,
+          items: { type: "string", description: "Search term — matched against key names and translation values" },
+        },
+        locales: {
+          type: "array",
+          items: { type: "string", description: "Optional locale codes to search in; omit to search all configured locales" },
+        },
+      },
+      required: ["queries"],
+    },
+  },
   {
     name: "create_translation_keys",
     description:
