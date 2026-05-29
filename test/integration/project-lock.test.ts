@@ -20,12 +20,6 @@ function readLocaleKeySets(projectRoot: string): { enKeys: string[]; deKeys: str
   };
 }
 
-function isCorrupted(enKeys: string[], deKeys: string[], expected: number): boolean {
-  if (enKeys.length < expected || deKeys.length < expected) return true;
-  if (enKeys.length !== deKeys.length) return true;
-  return enKeys.some((k, i) => k !== deKeys[i]);
-}
-
 interface WorkerResult {
   pid: number;
   ms: number;
@@ -82,18 +76,7 @@ describe("cross-process project lock", () => {
     if (projectRoot) await fs.promises.rm(projectRoot, { recursive: true, force: true });
   });
 
-  it("without file lock: parallel MCP processes can lose keys", async () => {
-    projectRoot = await copyFixtureToTemp("minimal-inlang");
-    const settingsPath = settingsPathIn(projectRoot);
-    const workers = await forkWorkers(settingsPath, false);
-    expect(workers.every((w) => w.ok)).toBe(true);
-
-    const expected = 1 + PROCESS_COUNT * OPS_PER_PROCESS;
-    const { enKeys, deKeys } = readLocaleKeySets(projectRoot);
-    // Mutex-only: cross-process races can drop keys or desync locales (counts may still match).
-    expect(isCorrupted(enKeys, deKeys, expected)).toBe(true);
-  }, 120000);
-
+  // Mutex-only data loss is non-deterministic — see npm run test:bench for a manual comparison.
   it("with file lock: all keys preserved across locales", async () => {
     projectRoot = await copyFixtureToTemp("minimal-inlang");
     const settingsPath = settingsPathIn(projectRoot);
