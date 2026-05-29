@@ -1,7 +1,7 @@
 import fs from "fs";
 import path from "path";
 
-export const POIROT_VERSION = "3";
+export const POIROT_VERSION = "4";
 const MARKER_START = "##poirot##";
 const MARKER_END = "##poirot##";
 
@@ -23,7 +23,7 @@ export interface InstallResult {
 function poirotBlock(mcpServerPath: string, settingsPath: string | undefined): string {
   return `${MARKER_START}
 <!-- Poirot v${POIROT_VERSION} — do not edit between markers -->
-Use the poirot MCP tools for all i18n interactions in *.svelte, *.tsx, *.jsx, *.ts, *.js, *.vue, *.astro files. Never hardcode user-visible strings — always create a translation key instead. Tools: create_translation_keys, set_translation_values, rename_translation_keys (all accept one or many entries), auto_translate (once at end of session), check_paraglide (after larger batches).
+Use the poirot MCP tools for all i18n interactions in *.svelte, *.tsx, *.jsx, *.ts, *.js, *.vue, *.astro files. Never hardcode user-visible strings — always create a translation key instead. For strings with runtime variables use {placeholders} in the value (e.g. "You have {count} messages") and call the generated function with params (m.key({ count: n })). Tools: create_translation_keys, set_translation_values, rename_translation_keys (all accept one or many entries), auto_translate (once at end of session), check_paraglide (after larger batches).
 ${MARKER_END}`;
 }
 

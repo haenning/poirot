@@ -227,6 +227,7 @@ async function runMcpServer(): Promise<void> {
         name: "create_translation_keys",
         description:
           "Create one or more i18n translation keys. Pass a single entry or multiple — always use this tool, never hardcode strings. " +
+          "Supports runtime variables: include {placeholders} in the value (e.g. \"You have {count} messages\") and paraglide will type the generated function accordingly (m.key({ count: n })). " +
           "Returns the exact key reference and base value for each entry so you know precisely which m.key() to insert.",
         inputSchema: {
           type: "object" as const,

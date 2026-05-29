@@ -441,6 +441,7 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
   .locale-val { flex: 1; font-size: 10px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; opacity: 0.45; }
   .locale-val.translated { color: var(--vscode-testing-iconPassed, #78c88c); opacity: 1; }
   .locale-val.empty { opacity: 0.25; font-style: italic; }
+  .locale-val .var-pill { color: var(--vscode-symbolIcon-variableForeground, #4fc1ff); opacity: 1; }
   .locale-row input { flex: 1; font-size: 10px; }
   .save-row { margin-top: 4px; display: flex; justify-content: flex-end; gap: 4px; }
   .error { color: var(--vscode-errorForeground); font-size: 10px; margin-top: 4px; }
@@ -661,7 +662,7 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
         const valClass = isEmpty ? 'empty' : 'translated';
         return \`<div class="locale-row">
           <span class="locale-label">\${escHtml(locale)}</span>
-          <span class="locale-val \${valClass}">\${isEmpty ? 'empty' : escHtml(val)}</span>
+          <span class="locale-val \${valClass}">\${isEmpty ? 'empty' : highlightVars(val)}</span>
         </div>\`;
       }).join('');
 
@@ -709,6 +710,10 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
 
   function escHtml(s) {
     return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+  }
+
+  function highlightVars(s) {
+    return escHtml(s).replace(/\{([^}]+)\}/g, '<span class="var-pill">{$1}</span>');
   }
 
   vscode.postMessage({ type: 'ready' });
