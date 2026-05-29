@@ -3,7 +3,7 @@ import { execSync } from "child_process";
 import { Server } from "@modelcontextprotocol/sdk/server/index.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { ListToolsRequestSchema, CallToolRequestSchema } from "@modelcontextprotocol/sdk/types.js";
-import { readInlangConfig, readAllLocales, getAllKeys, addKey } from "./inlang";
+import { readInlangConfig, readAllLocales, getAllKeys, addKey, setLocaleValue, renameKey } from "./inlang";
 import { generateUniqueKey } from "./keygen";
 
 function getSettingsPath(): string {
@@ -68,6 +68,30 @@ async function runMcpServer(): Promise<void> {
           type: "object" as const,
           properties: {},
           required: [],
+        },
+      },
+      {
+        name: "set_translation_value",
+        description: "Set the translation value for a specific key in a specific locale. Use this to update or fix an individual translation without touching other locales.",
+        inputSchema: {
+          type: "object" as const,
+          properties: {
+            key:    { type: "string", description: "The translation key name (e.g. brave_quiet_fox)" },
+            locale: { type: "string", description: "The locale to update (e.g. de, fr, en)" },
+            value:  { type: "string", description: "The new translation value" },
+          },
+          required: ["key", "locale", "value"],
+        },
+      },
+      {
+        name: "rename_translation_key",
+        description: "Rename an existing translation key to a new auto-generated random name across all locale files. Use this when a key name no longer reflects its content or needs to be regenerated.",
+        inputSchema: {
+          type: "object" as const,
+          properties: {
+            key: { type: "string", description: "The current key name to rename" },
+          },
+          required: ["key"],
         },
       },
       {
@@ -141,6 +165,36 @@ async function runMcpServer(): Promise<void> {
         const detail = (e.stderr ?? e.stdout ?? e.message ?? String(err)).trim();
         return { content: [{ type: "text" as const, text: `machine-translate failed:\n${detail}` }] };
       }
+    }
+
+    // ── set single locale value ──────────────────────────────────────────────
+    if (name === "set_translation_value") {
+      const { key, locale, value } = args as { key: string; locale: string; value: string };
+      const settingsPath = getSettingsPath();
+      const config = await readInlangConfig(settingsPath);
+      const localeMap = await readAllLocales(config);
+      if (!getAllKeys(localeMap, config.baseLocale).includes(key)) {
+        return { content: [{ type: "text" as const, text: `Error: key "${key}" not found` }] };
+      }
+      await setLocaleValue(config, localeMap, key, locale, value);
+      process.stderr.write("POIROT_RELOAD\n");
+      return { content: [{ type: "text" as const, text: `Updated ${locale}.${key} = "${value}"` }] };
+    }
+
+    // ── rename key ───────────────────────────────────────────────────────────
+    if (name === "rename_translation_key") {
+      const { key } = args as { key: string };
+      const settingsPath = getSettingsPath();
+      const config = await readInlangConfig(settingsPath);
+      const localeMap = await readAllLocales(config);
+      const existing = new Set(getAllKeys(localeMap, config.baseLocale));
+      if (!existing.has(key)) {
+        return { content: [{ type: "text" as const, text: `Error: key "${key}" not found` }] };
+      }
+      const newKey = generateUniqueKey(existing);
+      await renameKey(config, localeMap, key, newKey);
+      process.stderr.write("POIROT_RELOAD\n");
+      return { content: [{ type: "text" as const, text: `Renamed m.${key}() → m.${newKey}()` }] };
     }
 
     // ── check paraglide ──────────────────────────────────────────────────────

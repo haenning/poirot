@@ -98,6 +98,39 @@ export async function addKey(
   );
 }
 
+export async function setLocaleValue(
+  config: InlangConfig,
+  localeMap: LocaleMap,
+  key: string,
+  locale: string,
+  value: string
+): Promise<void> {
+  if (!value.trim()) throw new Error("Value must not be empty");
+  if (!config.locales.includes(locale)) throw new Error(`Unknown locale: ${locale}`);
+  const data = { ...(localeMap[locale] ?? {}) };
+  data[key] = value;
+  localeMap[locale] = data;
+  await writeLocaleFile(config, locale, data);
+}
+
+export async function renameKey(
+  config: InlangConfig,
+  localeMap: LocaleMap,
+  oldKey: string,
+  newKey: string
+): Promise<void> {
+  await Promise.all(
+    config.locales.map((locale) => {
+      const data = { ...(localeMap[locale] ?? {}) };
+      if (!(oldKey in data)) return Promise.resolve();
+      data[newKey] = data[oldKey];
+      delete data[oldKey];
+      localeMap[locale] = data;
+      return writeLocaleFile(config, locale, data);
+    })
+  );
+}
+
 export async function saveKeyEdits(
   config: InlangConfig,
   localeMap: LocaleMap,
@@ -106,6 +139,7 @@ export async function saveKeyEdits(
 ): Promise<void> {
   await Promise.all(
     Object.entries(edits).map(([locale, value]) => {
+      if (!value.trim()) return Promise.resolve(); // never write empty/whitespace-only strings
       const data = { ...(localeMap[locale] ?? {}) };
       data[key] = value;
       localeMap[locale] = data;
