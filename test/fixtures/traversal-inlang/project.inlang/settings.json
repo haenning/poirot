@@ -1,0 +1,7 @@
+{
+  "baseLocale": "en",
+  "locales": ["en", "de"],
+  "plugin.inlang.messageFormat": {
+    "pathPattern": "../outside/{locale}.json"
+  }
+}

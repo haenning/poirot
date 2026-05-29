@@ -1,4 +1,4 @@
-.PHONY: build watch test
+.PHONY: build watch test test-manual
 
 build:
 	npm run compile
@@ -6,5 +6,8 @@ build:
 watch:
 	npm run watch
 
-test: build
+test:
+	npm test
+
+test-manual: build
 	cursor --extensionDevelopmentPath=$(PWD)

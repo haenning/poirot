@@ -10,9 +10,9 @@ import {
 import { DecorationManager } from "./decorations";
 import { detectAgents, installRules, needsUpdate, POIROT_VERSION } from "./rules-installer";
 import { callMcpTool } from "./mcp-spawn";
+import { scanKeysFromText } from "./scan-keys";
+import { isPathInsideRoots } from "./path-security";
 
-
-const M_FUNC_RE = /\bm\.([a-z][a-z0-9_]*)\(\)/g;
 
 const SUPPORTED_EXTENSIONS = new Set([
   ".svelte", ".ts", ".tsx", ".js", ".jsx", ".vue", ".astro",
@@ -106,6 +106,10 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
   }
 
   private async _loadConfig(settingsPath: string): Promise<void> {
+    const roots = (vscode.workspace.workspaceFolders ?? []).map((f) => f.uri.fsPath);
+    if (!isPathInsideRoots(settingsPath, roots)) {
+      throw new Error("Settings path must be inside the current workspace");
+    }
     this._config = await readInlangConfig(settingsPath);
     this._localeMap = await readAllLocales(this._config);
     this._pendingEdits.clear();
@@ -285,14 +289,7 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
   }
 
   private _scanFileKeys(editor: vscode.TextEditor): string[] {
-    const text = editor.document.getText();
-    const found = new Set<string>();
-    let m: RegExpExecArray | null;
-    M_FUNC_RE.lastIndex = 0;
-    while ((m = M_FUNC_RE.exec(text)) !== null) {
-      found.add(m[1]);
-    }
-    return [...found];
+    return scanKeysFromText(editor.document.getText());
   }
 
   private _getCurrentFileKeys(): string[] {

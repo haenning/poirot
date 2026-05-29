@@ -18,6 +18,16 @@
   ],
   "main": "./dist/extension.js",
   "contributes": {
+    "configuration": {
+      "title": "Poirot",
+      "properties": {
+        "poirot.autoConfigureCursorMcp": {
+          "type": "boolean",
+          "default": true,
+          "description": "Write a poirot entry to ~/.cursor/mcp.json when the extension activates or the config path changes."
+        }
+      }
+    },
     "viewsContainers": {
       "activitybar": [
         {
@@ -40,6 +50,14 @@
       {
         "command": "poirot.newKey",
         "title": "Poirot: New Translation Key"
+      },
+      {
+        "command": "poirot.goToKey",
+        "title": "Poirot: Go To Key"
+      },
+      {
+        "command": "poirot.editKey",
+        "title": "Poirot: Edit Key"
       }
     ],
     "keybindings": [
@@ -54,17 +72,25 @@
     "compile": "node esbuild.js",
     "watch": "node esbuild.js --watch",
     "vscode:prepublish": "node esbuild.js --production",
-    "package": "vsce package"
+    "package": "vsce package",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "test:integration": "npm run compile && vitest run --config vitest.integration.config.ts",
+    "test:e2e": "npm run compile && node test/e2e/runTests.js",
+    "test:all": "npm test && npm run test:integration && npm run test:e2e"
   },
   "dependencies": {
-    "@modelcontextprotocol/sdk": "^1.10.0",
+    "@modelcontextprotocol/sdk": "^1.29.0",
     "unique-names-generator": "^4.7.1"
   },
   "devDependencies": {
-    "@types/node": "^20.0.0",
-    "@types/vscode": "^1.85.0",
-    "@vscode/vsce": "^3.0.0",
+    "@types/node": "^20.19.0",
+    "@types/vscode": "^1.120.0",
+    "@vscode/test-electron": "^2.4.1",
+    "@vscode/vsce": "^3.9.0",
     "esbuild": "^0.28.0",
-    "typescript": "^5.4.0"
+    "mocha": "^11.7.6",
+    "typescript": "^5.9.0",
+    "vitest": "^3.2.0"
   }
 }

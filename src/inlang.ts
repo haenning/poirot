@@ -1,6 +1,7 @@
 import fs from "fs";
 import path from "path";
 import { atomicWriteJson } from "./atomic";
+import { assertPathContained, validateLocaleCode, validatePathPattern } from "./path-security";
 
 export interface InlangConfig {
   settingsPath: string;
@@ -57,13 +58,17 @@ export async function readInlangConfig(settingsPath: string): Promise<InlangConf
 
   // projectDir is two levels up from settings.json (above project.inlang/)
   const projectDir = path.dirname(path.dirname(settingsPath));
+  validatePathPattern(pathPattern);
   const paraglideOutdir = readParaglideOutdir(projectDir);
 
   return { settingsPath, baseLocale, locales, pathPattern, projectDir, paraglideOutdir };
 }
 
 export function resolveLocalePath(config: InlangConfig, locale: string): string {
-  return path.resolve(config.projectDir, config.pathPattern.replace("{locale}", locale));
+  validateLocaleCode(locale);
+  const filePath = path.resolve(config.projectDir, config.pathPattern.replace("{locale}", locale));
+  assertPathContained(config.projectDir, filePath);
+  return filePath;
 }
 
 export async function readAllLocales(config: InlangConfig): Promise<LocaleMap> {

@@ -1,5 +1,7 @@
 # Poirot
 
+![Tests](https://github.com/haenning/poirot/actions/workflows/test.yml/badge.svg)
+
 A VS Code / Cursor extension for managing [paraglide-js](https://inlang.com/m/gerre34r/library-inlang-paraglideJs) translation keys without leaving your editor.
 
 ## Features
@@ -8,7 +10,7 @@ A VS Code / Cursor extension for managing [paraglide-js](https://inlang.com/m/ge
 - **CodeLens links** — a clickable `↗ open in en.json` link appears above each line, jumping straight to that key in the locale file
 - **Sidebar panel** — browse all keys, see the top 3 locale values, search by key name or value, edit and save translations in place
 - **New key flow** — `Cmd+Shift+T` (Mac) / `Ctrl+Shift+T`: type the translation value, confirm the auto-generated key name, and `m.key()` is inserted at the cursor
-- **MCP server** — exposes a `create_translation_key` tool so AI agents (Cursor, Claude Code) can create keys directly
+- **MCP server** — exposes MCP tools so AI agents (Cursor, Claude Code) can create and manage keys
 - **Always on** — decorations and the MCP server start automatically on workspace open, no sidebar interaction required
 
 ## Requirements
@@ -57,14 +59,15 @@ Open the Poirot panel from the activity bar (speech bubble icon).
 
 ### MCP (Cursor / Claude Code)
 
-On activation Poirot writes a `poirot` entry to `~/.cursor/mcp.json` automatically. Four tools are exposed to any MCP-compatible agent:
+When `poirot.autoConfigureCursorMcp` is enabled (default), Poirot writes a `poirot` entry to `~/.cursor/mcp.json` on activation. Five tools are exposed to any MCP-compatible agent:
 
 | Tool | When to use |
 | ---- | ----------- |
-| `create_translation_key` | Create a single key |
-| `create_translation_keys` | Create multiple keys in one call — always prefer this over calling the single-key tool in a loop |
-| `auto_translate` | Translate all missing locale values by running `npm run machine-translate` in the project root — call only once, at the very end of an editing session |
-| `check_paraglide` | Compile paraglide and report missing/orphan keys — use after larger batches of changes |
+| `create_translation_keys` | Create one or many keys — always prefer this over hardcoding strings |
+| `set_translation_values` | Set or fix translations for specific key/locale pairs |
+| `rename_translation_keys` | Rename keys to new auto-generated names |
+| `auto_translate` | Fill missing locale values via `npm run machine-translate` — call once at end of session |
+| `check_paraglide` | Compile paraglide and report missing/orphan keys |
 
 ```text
 create_translation_keys(entries: [
@@ -76,6 +79,18 @@ create_translation_keys(entries: [
 ```
 
 The agent receives the generated key references and inserts them directly into code. After all keys are created, it can call `auto_translate` to fill in secondary locales via the paraglide machine-translate script.
+
+## Testing
+
+| Area | Tier | Command |
+|------|------|---------|
+| Locale CRUD + path safety | Unit | `npm test` |
+| Mutex / single-writer | Unit + Integration | `npm run test:integration` |
+| MCP stdio + IPC tools | Integration | `npm run test:integration` |
+| Sidebar + decorations | E2E | `npm run test:e2e` |
+| Full suite | All | `npm run test:all` |
+
+See [TESTING.md](TESTING.md) for details.
 
 ## Project structure expected
 
@@ -102,6 +117,7 @@ your-project/
 ```bash
 npm install
 npm run watch        # rebuild on change
+npm test             # unit tests
 ```
 
 Press `F5` in VS Code to launch an Extension Development Host, or:

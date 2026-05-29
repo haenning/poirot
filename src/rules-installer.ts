@@ -166,13 +166,9 @@ export function installRules(
     upsertFile(ctx.cursorRulesLegacy, "");
   }
 
-  // Claude: inject/update block in CLAUDE.md
+  // Claude: inject/update block only when CLAUDE.md already exists
   if (ctx.claudeMd) {
     upsertFile(ctx.claudeMd, "");
-  } else {
-    // No CLAUDE.md found — create at project root
-    const claudePath = path.join(projectDir, "CLAUDE.md");
-    upsertFile(claudePath, "# Project\n");
   }
 
   return result;
