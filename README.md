@@ -9,7 +9,7 @@ A VS Code / Cursor extension for managing [paraglide-js](https://inlang.com/m/ge
 - **Inline decorations** — every `m.key()` call in your code shows the base locale translation value next to it in a subtle bordered box
 - **CodeLens links** — a clickable `↗ open in en.json` link appears above each line, jumping straight to that key in the locale file
 - **Sidebar panel** — browse all keys, see the top 3 locale values, search by key name or value, edit and save translations in place
-- **New key flow** — `Cmd+Shift+T` (Mac) / `Ctrl+Shift+T`: type the translation value, confirm the auto-generated key name, and `m.key()` is inserted at the cursor
+- **New key flow** — `Cmd+Shift+T` (Mac) / `Ctrl+Shift+T`: type the translation value, and a paste-ready `m.key()` (with `{param: a}` slots when the value has placeholders) is inserted at the cursor
 - **MCP server** — exposes MCP tools so AI agents (Cursor, Claude Code) can create and manage keys
 - **Always on** — decorations and the MCP server start automatically on workspace open, no sidebar interaction required
 
@@ -35,7 +35,7 @@ The script builds the extension and installs it into Cursor or VS Code automatic
 ```bash
 npm install
 npm run package
-code --install-extension poirot-0.1.0.vsix
+code --install-extension poirot-0.2.0.vsix
 ```
 
 ## Usage
@@ -56,17 +56,26 @@ Open the Poirot panel from the activity bar (speech bubble icon).
 - **With search query** — searches all keys by name and value across all locale files
 - **Edit button** — makes locale values editable inline; Save writes atomically to disk
 - **+ New Key** — same as the keyboard shortcut
+- **Orphan keys** (pinned to sidebar bottom) — **Count** shows keys in locale files but not in base locale; **Proof** opens Find in Files to verify no `m.key()` usages remain; **Purge** deletes them
 
 ### MCP (Cursor / Claude Code)
 
-When `poirot.autoConfigureCursorMcp` is enabled (default), Poirot writes a `poirot` entry to `~/.cursor/mcp.json` on activation. Six tools are exposed to any MCP-compatible agent:
+When `poirot.autoConfigureCursorMcp` is enabled (default), Poirot writes a `poirot` entry to `~/.cursor/mcp.json` on activation. Fourteen tools are exposed to any MCP-compatible agent:
 
 | Tool | When to use |
 | ---- | ----------- |
-| `bulk_lookup_translations` | Search existing keys by name or value — up to 5 matches per query; optional `locales` to limit languages |
+| `bulk_lookup_translations` | Fuzzy search by key name or value — up to 5 matches per query |
+| `get_translations` | Exact fetch when you already know key names |
+| `get_i18n_config` | Project locales, paths, and fill counts |
+| `list_translation_keys` | Browse/filter keys (prefix, missing locale, paginated) |
+| `scan_file_keys` | List `m.key()` calls in a source file |
+| `find_key_usages` | File/line references before rename or delete |
+| `report_missing_translations` | Missing/orphan counts — no compile, mid-session |
+| `validate_placeholders` | Ensure `{name}` placeholders match across locales |
 | `create_translation_keys` | Create one or many keys — always prefer this over hardcoding strings |
 | `set_translation_values` | Set or fix translations for specific key/locale pairs |
 | `rename_translation_keys` | Rename keys to new auto-generated names |
+| `delete_translation_keys` | Remove keys; `onlyIfUnused` skips keys still in code |
 | `auto_translate` | Fill missing locale values via `npm run machine-translate` — call once at end of session |
 | `check_paraglide` | Compile paraglide and report missing/orphan keys |
 
@@ -76,12 +85,12 @@ create_translation_keys(entries: [
   { value: "Cancel" }
 ])
 → m.brave_quiet_fox()  ← "Submit form"
-→ m.calm_silver_hawk()  ← "Cancel"
+→ m.calm_silver_hawk({ count: a })  ← "You have {count} messages"
 ```
 
 The agent receives the generated key references and inserts them directly into code. After all keys are created, it can call `auto_translate` to fill in secondary locales via the paraglide machine-translate script.
 
-**Lookup before create** — agent rules (v6) instruct models to call `bulk_lookup_translations` first so existing keys are reused instead of duplicated:
+**Lookup before create** — agent rules (v8) instruct models to discover keys first (`bulk_lookup`, `get_translations`, `scan_file_keys`) and check usages before delete/rename:
 
 ```text
 bulk_lookup_translations(queries: ["submit", "cancel"], locales: ["en", "de"])
@@ -93,10 +102,18 @@ bulk_lookup_translations(queries: ["submit", "cancel"], locales: ["en", "de"])
 
 ## Changelog
 
+### 0.2.0
+
+- **Sidebar orphan keys bar** — sticky Count / Proof / Purge for locale-only keys
+- **Paste-ready key refs** — `create_translation_keys` returns `m.key({ count: a, name: b })` when values have placeholders
+- **Sidebar polish** — larger + New Key button, neutral translation value styling
+
 ### 0.1.0
 
+- **Read tools** — `get_translations`, `get_i18n_config`, `list_translation_keys`, `scan_file_keys`, `find_key_usages`, `report_missing_translations`, `validate_placeholders`
+- **`delete_translation_keys`** — remove keys with optional `onlyIfUnused` guard
 - **`bulk_lookup_translations` MCP tool** — search keys by name or value; up to 5 matches per query; optional locale filter
-- **Agent rules v6** — numbered workflow: lookup → create → translate → check
+- **Agent rules v7** — full lookup → mutate → verify workflow
 - **Cross-process write lock** — safe concurrent MCP writes via `{projectDir}/.poirot/write.lock`
 - **Security hardening** — path jail, Node IPC (no Unix socket), `execFileSync`, MCP restart on config change
 - **Test suite** — unit, integration, and E2E tests with CI

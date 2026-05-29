@@ -1,12 +1,37 @@
 import { execFileSync } from "child_process";
-import { readInlangConfig, readAllLocales, getAllKeys, addKey, setLocaleValue, renameKey } from "./inlang";
+import {
+  readInlangConfig,
+  readAllLocales,
+  getAllKeys,
+  addKey,
+  setLocaleValue,
+  renameKey,
+  deleteKey,
+} from "./inlang";
 import { generateUniqueKey } from "./keygen";
+import { formatKeyCall } from "./key-ref";
 import { withProjectWrite } from "./write-coordinator";
 import {
   bulkLookupTranslations,
   formatBulkLookupResults,
   getSearchLocales,
 } from "./lookup";
+import {
+  getTranslations,
+  formatTranslations,
+  listTranslationKeys,
+  formatListResult,
+  formatI18nConfig,
+  reportMissingTranslations,
+  formatMissingReport,
+} from "./i18n-read";
+import {
+  findKeyUsages,
+  formatKeyUsages,
+  scanFileKeys,
+  formatScanFileKeys,
+} from "./key-usages";
+import { validateKeyPlaceholders, formatPlaceholderIssues } from "./placeholders";
 
 export interface ToolResult {
   content: Array<{ type: "text"; text: string }>;
@@ -31,7 +56,16 @@ function onReload(): void {
   process.stderr.write("POIROT_RELOAD\n");
 }
 
-const READ_ONLY_TOOLS = new Set(["bulk_lookup_translations"]);
+const READ_ONLY_TOOLS = new Set([
+  "bulk_lookup_translations",
+  "get_translations",
+  "get_i18n_config",
+  "list_translation_keys",
+  "report_missing_translations",
+  "validate_placeholders",
+  "scan_file_keys",
+  "find_key_usages",
+]);
 
 export async function handleTool(
   name: string,
@@ -59,6 +93,113 @@ async function executeTool(
       return { content: [{ type: "text" as const, text }] };
     }
 
+    if (name === "get_translations") {
+      const { keys, locales } = args as { keys: string[]; locales?: string[] };
+      const config = await readInlangConfig(settingsPath);
+      const localeMap = await readAllLocales(config);
+      const entries = getTranslations(localeMap, config, keys, locales);
+      return { content: [{ type: "text" as const, text: formatTranslations(entries) }] };
+    }
+
+    if (name === "get_i18n_config") {
+      const config = await readInlangConfig(settingsPath);
+      const localeMap = await readAllLocales(config);
+      return { content: [{ type: "text" as const, text: formatI18nConfig(config, localeMap) }] };
+    }
+
+    if (name === "list_translation_keys") {
+      const { prefix, contains, missingInLocale, limit, offset } = args as {
+        prefix?: string;
+        contains?: string;
+        missingInLocale?: string;
+        limit?: number;
+        offset?: number;
+      };
+      const config = await readInlangConfig(settingsPath);
+      const localeMap = await readAllLocales(config);
+      const result = listTranslationKeys(localeMap, config, {
+        prefix,
+        contains,
+        missingInLocale,
+        limit,
+        offset,
+      });
+      return {
+        content: [{ type: "text" as const, text: formatListResult(result, offset ?? 0) }],
+      };
+    }
+
+    if (name === "report_missing_translations") {
+      const config = await readInlangConfig(settingsPath);
+      const localeMap = await readAllLocales(config);
+      const baseKeys = getAllKeys(localeMap, config.baseLocale);
+      const reports = reportMissingTranslations(localeMap, config);
+      return {
+        content: [{ type: "text" as const, text: formatMissingReport(reports, baseKeys.length) }],
+      };
+    }
+
+    if (name === "validate_placeholders") {
+      const { keys } = args as { keys?: string[] };
+      const config = await readInlangConfig(settingsPath);
+      const localeMap = await readAllLocales(config);
+      const targetKeys = keys?.length ? keys : getAllKeys(localeMap, config.baseLocale);
+      const issues = targetKeys.flatMap((key) => {
+        const values: Record<string, string> = {};
+        for (const locale of config.locales) {
+          const value = localeMap[locale]?.[key];
+          if (value !== undefined && value !== "") {
+            values[locale] = value;
+          }
+        }
+        return validateKeyPlaceholders(key, values, config.locales, config.baseLocale);
+      });
+      return { content: [{ type: "text" as const, text: formatPlaceholderIssues(issues) }] };
+    }
+
+    if (name === "scan_file_keys") {
+      const { file } = args as { file: string };
+      const config = await readInlangConfig(settingsPath);
+      const result = await scanFileKeys(config.projectDir, file);
+      return { content: [{ type: "text" as const, text: formatScanFileKeys(result) }] };
+    }
+
+    if (name === "find_key_usages") {
+      const { keys, include } = args as { keys: string[]; include?: string[] };
+      const config = await readInlangConfig(settingsPath);
+      const results = await findKeyUsages(config.projectDir, keys, include);
+      return { content: [{ type: "text" as const, text: formatKeyUsages(results) }] };
+    }
+
+    if (name === "delete_translation_keys") {
+      const { keys, onlyIfUnused } = args as { keys: string[]; onlyIfUnused?: boolean };
+      const config = await readInlangConfig(settingsPath);
+      const localeMap = await readAllLocales(config);
+      const lines: string[] = [];
+
+      let usageMap: Map<string, number> | undefined;
+      if (onlyIfUnused) {
+        const usages = await findKeyUsages(config.projectDir, keys);
+        usageMap = new Map(usages.map((u) => [u.key, u.hits.length]));
+      }
+
+      for (const key of keys) {
+        if (onlyIfUnused && (usageMap!.get(key) ?? 0) > 0) {
+          lines.push(`✗ m.${key}() — still used in code`);
+          continue;
+        }
+        const deleted = await deleteKey(config, localeMap, key);
+        if (deleted) {
+          lines.push(`✓ deleted m.${key}()`);
+        } else {
+          lines.push(`✗ m.${key}() — not found`);
+        }
+      }
+
+      onReload();
+      return { content: [{ type: "text" as const, text: lines.join("\n") }] };
+    }
+
     if (name === "create_translation_keys") {
       const { entries } = args as { entries: Array<{ value: string }> };
       const config = await readInlangConfig(settingsPath);
@@ -70,7 +211,7 @@ async function executeTool(
         const key = generateUniqueKey(existing);
         existing.add(key);
         await addKey(config, localeMap, key, entry.value);
-        lines.push(`m.${key}()  [${config.baseLocale}] "${entry.value}"`);
+        lines.push(`${formatKeyCall(key, entry.value)}  [${config.baseLocale}] "${entry.value}"`);
       }
 
       onReload();
@@ -148,24 +289,8 @@ async function executeTool(
       const config = await readInlangConfig(settingsPath);
       const localeMap = await readAllLocales(config);
       const baseKeys = getAllKeys(localeMap, config.baseLocale);
-      const issues: string[] = [];
-
-      for (const locale of config.locales) {
-        if (locale === config.baseLocale) continue;
-        const messages = localeMap[locale] ?? {};
-        const missing = baseKeys.filter((k) => !messages[k]);
-        if (missing.length > 0) {
-          issues.push(
-            `${locale}: missing ${missing.length} key(s): ${missing.slice(0, 5).join(", ")}${missing.length > 5 ? ` … +${missing.length - 5} more` : ""}`
-          );
-        }
-        const orphans = Object.keys(messages).filter(
-          (k) => k !== "$schema" && !baseKeys.includes(k)
-        );
-        if (orphans.length > 0) {
-          issues.push(`${locale}: ${orphans.length} orphan key(s): ${orphans.slice(0, 3).join(", ")}`);
-        }
-      }
+      const reports = reportMissingTranslations(localeMap, config);
+      const keyReport = formatMissingReport(reports, baseKeys.length);
 
       let compileOutput = "";
       try {
@@ -180,11 +305,6 @@ async function executeTool(
         const e = err as { stdout?: string; stderr?: string; message?: string };
         compileOutput = `Paraglide compile failed:\n${(e.stderr ?? e.stdout ?? e.message ?? String(err)).trim()}`;
       }
-
-      const keyReport =
-        issues.length === 0
-          ? `All ${baseKeys.length} base keys present in every locale.`
-          : `Key issues:\n${issues.join("\n")}`;
 
       return { content: [{ type: "text" as const, text: `${keyReport}\n\n${compileOutput}` }] };
     }
@@ -217,11 +337,110 @@ export const MCP_TOOL_DEFINITIONS = [
     },
   },
   {
+    name: "get_translations",
+    description:
+      "Fetch exact translation values for specific keys. Use when you already know key names (e.g. from code). " +
+      "Optional locales filter; omit to return all configured locales.",
+    inputSchema: {
+      type: "object" as const,
+      properties: {
+        keys: {
+          type: "array",
+          minItems: 1,
+          items: { type: "string", description: "Exact key names to fetch" },
+        },
+        locales: {
+          type: "array",
+          items: { type: "string", description: "Optional locale codes; omit for all locales" },
+        },
+      },
+      required: ["keys"],
+    },
+  },
+  {
+    name: "get_i18n_config",
+    description:
+      "Read project i18n metadata: base locale, locales, message path pattern, paraglide outdir, and key fill counts.",
+    inputSchema: { type: "object" as const, properties: {}, required: [] },
+  },
+  {
+    name: "list_translation_keys",
+    description:
+      "Browse translation keys with optional filters. Paginated (default 50, max 200). " +
+      "Use prefix/contains to narrow results, or missingInLocale to find untranslated keys.",
+    inputSchema: {
+      type: "object" as const,
+      properties: {
+        prefix: { type: "string", description: "Key name prefix filter" },
+        contains: { type: "string", description: "Substring in key name or base-locale value" },
+        missingInLocale: { type: "string", description: "Only keys missing/empty in this locale" },
+        limit: { type: "number", description: "Max keys to return (default 50, max 200)" },
+        offset: { type: "number", description: "Skip this many matching keys" },
+      },
+      required: [],
+    },
+  },
+  {
+    name: "report_missing_translations",
+    description:
+      "Lightweight health check: missing and orphan key counts per locale. No paraglide compile — use mid-session.",
+    inputSchema: { type: "object" as const, properties: {}, required: [] },
+  },
+  {
+    name: "validate_placeholders",
+    description:
+      "Check that {placeholder} names match across locales for each key. " +
+      "Omit keys to validate all base keys; pass specific keys to narrow scope.",
+    inputSchema: {
+      type: "object" as const,
+      properties: {
+        keys: {
+          type: "array",
+          items: { type: "string", description: "Optional key names; omit to check all base keys" },
+        },
+      },
+      required: [],
+    },
+  },
+  {
+    name: "scan_file_keys",
+    description:
+      "List m.key() calls used in a source file. Pass path relative to project root or absolute within the project.",
+    inputSchema: {
+      type: "object" as const,
+      properties: {
+        file: { type: "string", description: "Source file path (e.g. src/Login.svelte)" },
+      },
+      required: ["file"],
+    },
+  },
+  {
+    name: "find_key_usages",
+    description:
+      "Find source files and line numbers where m.key() is called. " +
+      "Use before rename/delete. Optional include prefixes (e.g. [\"src\"]) limit the scan.",
+    inputSchema: {
+      type: "object" as const,
+      properties: {
+        keys: {
+          type: "array",
+          minItems: 1,
+          items: { type: "string", description: "Key names to find" },
+        },
+        include: {
+          type: "array",
+          items: { type: "string", description: "Optional path prefixes to scan (default: whole project)" },
+        },
+      },
+      required: ["keys"],
+    },
+  },
+  {
     name: "create_translation_keys",
     description:
       "Create one or more i18n translation keys. Pass a single entry or multiple — always use this tool, never hardcode strings. " +
       'Supports runtime variables: include {placeholders} in the value (e.g. "You have {count} messages") and paraglide will type the generated function accordingly (m.key({ count: n })). ' +
-      "Returns the exact key reference and base value for each entry so you know precisely which m.key() to insert.",
+      "Returns the exact paste-ready m.key() reference (with {param: a, …} slots when the value has placeholders) and base value for each entry.",
     inputSchema: {
       type: "object" as const,
       properties: {
@@ -277,6 +496,26 @@ export const MCP_TOOL_DEFINITIONS = [
           type: "array",
           minItems: 1,
           items: { type: "string", description: "Current key name to rename" },
+        },
+      },
+      required: ["keys"],
+    },
+  },
+  {
+    name: "delete_translation_keys",
+    description:
+      "Remove keys from all locale files. Set onlyIfUnused to skip keys still referenced in source code.",
+    inputSchema: {
+      type: "object" as const,
+      properties: {
+        keys: {
+          type: "array",
+          minItems: 1,
+          items: { type: "string", description: "Key names to delete" },
+        },
+        onlyIfUnused: {
+          type: "boolean",
+          description: "If true, skip keys that still have m.key() usages in the project",
         },
       },
       required: ["keys"],

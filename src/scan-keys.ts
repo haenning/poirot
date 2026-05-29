@@ -1,4 +1,4 @@
-const M_FUNC_RE = /\bm\.([a-z][a-z0-9_]*)\(\)/g;
+const M_FUNC_RE = /\bm\.([a-z][a-z0-9_]*)\(/g;
 const LINE_COMMENT_RE = /^\s*\/\//;
 
 function blockCommentRanges(text: string): Array<[number, number]> {

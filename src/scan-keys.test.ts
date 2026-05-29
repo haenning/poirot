@@ -7,6 +7,11 @@ describe("scan-keys", () => {
     expect(keys).toEqual(["hello_world"]);
   });
 
+  it("finds parameterized m.key() calls", () => {
+    const keys = scanKeysFromText('const x = m.hello_world({ name: "a" });');
+    expect(keys).toEqual(["hello_world"]);
+  });
+
   it("skips line comments", () => {
     const keys = scanKeysFromText("// m.ignored_key()\nm.used_key()");
     expect(keys).toEqual(["used_key"]);

@@ -1,7 +1,7 @@
 import fs from "fs";
 import path from "path";
 
-export const POIROT_VERSION = "6";
+export const POIROT_VERSION = "8";
 const MARKER_START = "##poirot##";
 const MARKER_END = "##poirot##";
 
@@ -26,11 +26,15 @@ function poirotBlock(mcpServerPath: string, settingsPath: string | undefined): s
 Use poirot MCP tools for all i18n in *.svelte, *.tsx, *.jsx, *.ts, *.js, *.vue, *.astro. Never hardcode user-visible strings.
 
 Workflow:
-1. bulk_lookup_translations — before creating keys, search existing translations by key name or value. Pass one or many queries; each returns up to 5 matches with m.key() references. Omit locales to search all languages, or pass e.g. ["en","de"] to match only in those locales. Reuse a match when the wording fits.
-2. create_translation_keys — only for strings with no suitable match. Supports {placeholders} for runtime params (m.key({ count: n })).
-3. set_translation_values / rename_translation_keys — fix or rename one or many entries.
-4. auto_translate — once at end of session to fill missing locales.
-5. check_paraglide — after larger batches to catch missing/orphan keys.
+1. get_i18n_config — project locales and paths when unsure.
+2. bulk_lookup_translations / get_translations / list_translation_keys / scan_file_keys — discover or fetch keys before editing.
+3. find_key_usages — before rename or delete; check all references.
+4. create_translation_keys — only for strings with no suitable match. Returns paste-ready m.key() with {param: a} slots for placeholders.
+5. set_translation_values / rename_translation_keys — fix or rename entries.
+6. validate_placeholders / report_missing_translations — mid-session checks (no compile).
+7. auto_translate — once at end of session.
+8. check_paraglide — after larger batches (includes compile).
+9. delete_translation_keys — remove orphans; use onlyIfUnused to skip keys still in code.
 ${MARKER_END}`;
 }
 

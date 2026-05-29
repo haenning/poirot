@@ -151,6 +151,25 @@ export async function renameKey(
   );
 }
 
+export async function deleteKey(
+  config: InlangConfig,
+  localeMap: LocaleMap,
+  key: string
+): Promise<boolean> {
+  let found = false;
+  await Promise.all(
+    config.locales.map((locale) => {
+      const data = { ...(localeMap[locale] ?? {}) };
+      if (!(key in data)) return Promise.resolve();
+      found = true;
+      delete data[key];
+      localeMap[locale] = data;
+      return writeLocaleFile(config, locale, data);
+    })
+  );
+  return found;
+}
+
 export async function saveKeyEdits(
   config: InlangConfig,
   localeMap: LocaleMap,

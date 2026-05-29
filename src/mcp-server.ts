@@ -5,7 +5,7 @@ import { ListToolsRequestSchema, CallToolRequestSchema } from "@modelcontextprot
 import { handleTool, MCP_TOOL_DEFINITIONS } from "./mcp-tools";
 import { assertIpcMessageSize, type IpcToolRequest } from "./mcp-ipc";
 
-const EXTENSION_VERSION = "0.1.0";
+const EXTENSION_VERSION = "0.2.0";
 
 function getSettingsPath(): string {
   return process.argv[2] ?? path.join(process.cwd(), "project.inlang", "settings.json");

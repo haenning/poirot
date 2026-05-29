@@ -2,7 +2,7 @@
   "name": "poirot",
   "displayName": "Poirot",
   "description": "Manage paraglide-js/inlang i18n translation keys from the sidebar",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "engines": {
     "vscode": "^1.85.0"
   },
