@@ -4,7 +4,7 @@
   "description": "Manage paraglide-js/inlang i18n translation keys from the sidebar",
   "version": "0.2.0",
   "engines": {
-    "vscode": "^1.85.0"
+    "vscode": "^1.120.0"
   },
   "repository": {
     "type": "git",
