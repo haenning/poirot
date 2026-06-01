@@ -1,4 +1,4 @@
-.PHONY: build watch test test-manual pr pr-open
+.PHONY: build watch test test-install test-manual pr pr-open
 
 build:
 	npm run compile
@@ -8,6 +8,9 @@ watch:
 
 test:
 	npm test
+
+test-install:
+	bash test/e2e/install.sh
 
 test-manual: build
 	cursor --extensionDevelopmentPath=$(PWD)

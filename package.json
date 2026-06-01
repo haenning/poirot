@@ -1,10 +1,11 @@
 {
   "name": "poirot",
+  "publisher": "haenning",
   "displayName": "Poirot",
   "description": "Manage paraglide-js/inlang i18n translation keys from the sidebar",
   "version": "0.2.0",
   "engines": {
-    "vscode": "^1.120.0"
+    "vscode": "^1.85.0"
   },
   "repository": {
     "type": "git",
@@ -88,7 +89,7 @@
   "devDependencies": {
     "@types/node": "^20.19.0",
     "@types/proper-lockfile": "^4.1.4",
-    "@types/vscode": "^1.120.0",
+    "@types/vscode": "^1.85.0",
     "@vscode/test-electron": "^2.4.1",
     "@vscode/vsce": "^3.9.0",
     "esbuild": "^0.28.0",
